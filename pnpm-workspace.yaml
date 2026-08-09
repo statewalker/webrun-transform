@@ -2,6 +2,9 @@ packages:
   - "packages/*"
 
 catalog:
+  "@statewalker/webrun-files": ^0.7.0
+  "@statewalker/webrun-files-mem": ^0.7.2
+  "@statewalker/webrun-files-node": ^0.7.0
   "@biomejs/biome": ^2.4.12
   "@jspm/generator": ^2.6.1
   "@types/node": ^25.6.0
