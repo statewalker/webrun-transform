@@ -1,0 +1,40 @@
+{
+  "name": "@statewalker/webrun-transform-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "description": "Incremental resource transformation \u2014 build engine, module resolution/serving, and transforms",
+  "homepage": "https://github.com/statewalker/webrun-transform",
+  "author": {
+    "name": "Mikhail Kotelnikov",
+    "email": "mikhail.kotelnikov@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/statewalker/webrun-transform.git"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "biome check --write .",
+    "lint:check": "biome check .",
+    "lint:fix": "biome check --write --unsafe .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "typecheck": "turbo run typecheck",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release-packages": "changeset publish"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@changesets/cli": "^2.29.8",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "version": ""
+}
