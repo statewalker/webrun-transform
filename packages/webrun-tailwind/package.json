@@ -23,12 +23,12 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/webrun-files": "workspace:*",
     "@statewalker/webrun-modules": "workspace:*",
     "tailwindcss": "4.3.3"
   },
   "devDependencies": {
-    "@statewalker/webrun-files-mem": "catalog:",
+    "@statewalker/webrun-files-mem": "workspace:*",
     "rimraf": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
