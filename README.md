@@ -35,9 +35,6 @@ This repository depends on one other repository, and only on the FilesApi:
 Everything reads and writes through `FilesApi`, which is what lets the same engine run
 against a real filesystem, an in-memory tree, or the browser.
 
-**Depended on by:** [`statewalker-workbench`](https://github.com/statewalker/statewalker-workbench)
-(`webrun-builder`, `webrun-dataflow`, `webrun-modules`).
-
 Cross-repo dependencies are declared `workspace:*` rather than `catalog:`. This is
 deliberate: turbo derives its task graph from `workspace:` specifiers and does **not**
 resolve `catalog:`, so a `catalog:` cross-repo dependency is invisible to the scheduler
