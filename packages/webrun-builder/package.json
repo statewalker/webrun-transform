@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/webrun-builder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "Project-free signal-driven build engine (BuildEngine<THost>): schedules dataflow builders over @statewalker/webrun-dataflow, drives file-backed update/transaction stores, and detects source changes over a FilesApi. Host-agnostic, with a local structural Logger and zero statewalker logging dependency.",

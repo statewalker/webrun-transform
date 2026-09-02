@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/webrun-dataflow",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "Signal-driven dataflow graph (forward impact propagation + filtered Kahn topo sort), with per-cell transaction and per-entry updates stores plus in-memory implementations. Zero deps.",
