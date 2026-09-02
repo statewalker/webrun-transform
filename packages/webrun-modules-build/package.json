@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/webrun-modules-build",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "type": "module",
   "description": "Batch module builder: drives the shared @statewalker/webrun-modules preprocess core through @statewalker/webrun-builder's BuildEngine with an ext-map URL policy, emitting a static .js/.css tree to a cache FilesApi.",
