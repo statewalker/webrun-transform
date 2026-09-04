@@ -240,10 +240,15 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
         // `/t/{target}`; a missing one has no `/raw/` to transform → 404 (never
         // routed through transformAndCache).
         const cached = await cache.exists(`${tRoot}/${id}`);
-        if (!cached && id.includes(`/${ctx.depsFolder}/`))
-          return new Response(null, { status: 404 });
+        const isProxy = id.includes(`/${ctx.depsFolder}/`);
+        if (!cached && isProxy) return new Response(null, { status: 404 });
         const body = cached ? await readText(cache, `${tRoot}/${id}`) : await transformAndCache(id);
-        return new Response(body, { status: 200, headers: { "content-type": "text/javascript" } });
+        // A proxy's body GROWS as more files of its module are transformed (its
+        // export surface is the union of its importers'). On the lazy fetch path a
+        // browser could otherwise heuristically cache a partial one.
+        const headers: Record<string, string> = { "content-type": "text/javascript" };
+        if (isProxy) headers["cache-control"] = "no-cache";
+        return new Response(body, { status: 200, headers });
       } catch {
         return new Response(null, { status: 404 });
       }

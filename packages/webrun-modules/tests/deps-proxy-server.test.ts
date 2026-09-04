@@ -315,4 +315,21 @@ describe("~deps proxy layer", () => {
       expect(spec.startsWith(".")).toBe(true); // relative — no bare specifier, no absolute/CDN URL
     }
   });
+
+  it("marks proxy responses no-cache so a later importer's widened body is seen", async () => {
+    const { p, ready } = projectWith(`import React from "react"; export const A = React;`);
+    await ready;
+    const server = newModuleServer({
+      cache: new MemFilesApi(),
+      project: p,
+      provided: newHostRegistry({ react: { marker: "ME" } }),
+    });
+    await server.prime({ url: "/app.ts" });
+    const proxy = await server.fetch(new Request("http://h/~/~deps/react/index.js"));
+    expect(proxy.status).toBe(200);
+    expect(proxy.headers.get("cache-control")).toBe("no-cache");
+    // A normal module keeps its existing (absent) cache header.
+    const mod = await server.fetch(new Request("http://h/~/app.ts"));
+    expect(mod.headers.get("cache-control")).toBe(null);
+  });
 });
