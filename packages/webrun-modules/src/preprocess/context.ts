@@ -139,12 +139,15 @@ export function urlPath(id: string, ctx: PreprocessContext): string {
 }
 
 /** Validate a deps folder name: exactly one non-empty path segment, never a
- *  traversal. It is spliced into ids verbatim, so a `/` or a `..` here would
- *  silently relocate every proxy. */
+ *  traversal, and safe as a single URL path segment. It is spliced verbatim
+ *  into ids that become URL path segments the server parses out of
+ *  `pathname` — a `/` or `..` would silently relocate every proxy, and a
+ *  `?`/`#`/`%` or other reserved/whitespace character would corrupt the URL
+ *  at request time. */
 export function normalizeDepsFolder(name: string): string {
-  if (!name || name.includes("/") || name === "." || name === "..") {
+  if (!name || name === "." || name === ".." || !/^[\w.~-]+$/.test(name)) {
     throw new Error(
-      `depsFolder must be a single non-empty path segment, got ${JSON.stringify(name)}`,
+      `depsFolder must be a single non-empty path segment made of letters, digits, "_", ".", "~", "-" (and not "." or ".."), got ${JSON.stringify(name)}`,
     );
   }
   return name;
