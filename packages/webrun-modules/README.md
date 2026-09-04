@@ -416,6 +416,14 @@ for authored sources, and `{name}@{version}/` for an npm package. So every file
 of a module resolves `react` through the one file `~deps/react/index.js`,
 however deep in the tree it sits.
 
+The folder's name is the `depsFolder` option (on both `newModuleServer` and
+`newProjectBuild`, default `"~deps"`); it must be a single path segment. Whatever
+you name it becomes a **reserved path segment for the whole project**: any id with
+`/{depsFolder}/` anywhere in it is treated as generated, so the walk never analyzes
+it and the server answers 404 for one that is not already in the cache. A real
+source directory of that name — `src/vendor/` under `depsFolder: "vendor"` — is
+therefore silently unreachable, so pick a name your sources do not use.
+
 That concentration is the point. The proxy is the seam at which a dependency can
 be substituted — for a host-provided singleton, a pinned build, a patched copy —
 and one predictable file per module is a seam you can actually operate on. The

@@ -99,14 +99,18 @@ export function webrunBuilders(served: string[]): RegisteredBuilder<WebrunBuildH
         })) {
           const id = toProjectId(u.uri);
           const emitted = host.ctx.policy.emittedPath(id);
-          // Prune the emitted artifact and its sidecars (source-hash gate + the CSS
-          // class-map), plus the F2 raw `.css` emit (`/${urlPath(id)}`, which differs
-          // from `emitted` only for a `.css` source), so a removed source leaves no
-          // orphan behind. (A removed asset's own bytes are `emitted` already.)
+          // Prune the emitted artifact and its sidecars (source-hash gate, the CSS
+          // class-map, and the accumulated proxy shape), plus the F2 raw `.css` emit
+          // (`/${urlPath(id)}`, which differs from `emitted` only for a `.css`
+          // source), so a removed source leaves no orphan behind. (A removed asset's
+          // own bytes are `emitted` already.) `.shape.json` is listed so a proxy's
+          // durable shape can never outlive the artifact it describes — this is the
+          // one place an emitted artifact is ever removed.
           for (const path of [
             emitted,
             `${emitted}.hash`,
             `${emitted}.exports.json`,
+            `${emitted}.shape.json`,
             `/${urlPath(id, host.ctx)}`,
           ]) {
             if (await host.cache.exists(path)) await host.cache.remove(path);

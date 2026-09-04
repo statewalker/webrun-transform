@@ -1,5 +1,5 @@
 import type { FilesApi } from "@statewalker/webrun-files";
-import { readText, writeText } from "@statewalker/webrun-files";
+import { readText, tryReadText, writeText } from "@statewalker/webrun-files";
 import semver from "semver";
 import { newDefaultEndpointResolver } from "../deps/endpoint-resolver.js";
 import { HOST_REGISTRY_KEY } from "../deps/host-registry.js";
@@ -170,7 +170,8 @@ export async function resolveSpec(
     const { id } = await resolveCssSpec(spec, fromId, ctx);
     if (id && isCssFile(id)) return { url: ctx.policy.servedUrl(id, fromId), id };
   }
-  // Bare external specifier → generate a co-located proxy; import the proxy.
+  // Bare external specifier → generate a proxy in the module root's deps folder;
+  // import the proxy.
   const pid = proxyId(fromId, spec, ctx.depsFolder);
   let binding: EndpointBinding;
   let endpointId: string | undefined;
@@ -194,6 +195,60 @@ function bindingKey(b: EndpointBinding): string {
   return `${b.kind}:${b.url}`;
 }
 
+/** Where a proxy's accumulated import shape is persisted, beside its emitted
+ *  artifact — same `.<kind>` sidecar convention the build already uses for the
+ *  per-id `.hash` gate. */
+function shapePath(pid: string, ctx: PreprocessContext): string {
+  return `${ctx.policy.emittedPath(pid)}.shape.json`;
+}
+
+/**
+ * Seed `ctx.proxies` for `pid` from its durable sidecar, ONCE per run, before the
+ * caller merges its own shape in.
+ *
+ * `ctx.proxies` is per-run in-memory state but the emitted proxy is durable, and a
+ * shared proxy's export surface is the union of ALL its importers'. An incremental
+ * driver walks only the CHANGED importers, so a fresh run would otherwise start
+ * from an empty accumulator and rewrite the proxy with just those importers'
+ * names — silently deleting exports that unchanged, already-emitted modules still
+ * import. Seeding from the sidecar makes the accumulator monotone across runs.
+ *
+ * The seed goes through `mergeProxyShape`, so it UNIONS with whatever a concurrent
+ * caller already merged instead of overwriting it, and concurrent callers for one
+ * pid share a single read via `singleFlight`. Only the import shape is persisted,
+ * never the binding: a binding legitimately changes between runs (a version bump
+ * moves a `local` endpoint url) and a stale persisted one would raise a spurious
+ * `conflicting bindings` error.
+ */
+async function seedProxyShape(
+  pid: string,
+  binding: EndpointBinding,
+  ctx: PreprocessContext,
+): Promise<void> {
+  if (ctx.proxies.has(pid)) return; // already touched in this run — nothing to seed
+  await singleFlight(ctx, `proxyseed:${pid}`, async () => {
+    const raw = await tryReadText(ctx.cache, shapePath(pid, ctx));
+    if (!raw) return;
+    let imp: ModuleImport | undefined;
+    try {
+      const parsed = JSON.parse(raw) as Partial<ModuleImport>;
+      if (Array.isArray(parsed?.names)) {
+        imp = {
+          names: parsed.names.filter((n): n is string => typeof n === "string"),
+          hasDefault: !!parsed.hasDefault,
+          hasNamespace: !!parsed.hasNamespace,
+        };
+      }
+    } catch {
+      imp = undefined; // a corrupt sidecar degrades to the pre-seed behaviour
+    }
+    if (!imp) return;
+    // The sidecar describes the shape the CURRENT artifact was emitted from, so a
+    // seed alone never needs a re-emit; its `grew` is deliberately discarded.
+    mergeProxyShape(pid, binding, imp, ctx);
+  });
+}
+
 /**
  * Merge one importer's import shape into a proxy's accumulated shape; returns
  * `true` when the shape grew and the body must be re-emitted.
@@ -201,7 +256,10 @@ function bindingKey(b: EndpointBinding): string {
  * SYNCHRONOUS BY DESIGN, and it MUST run outside `singleFlight`. The flight
  * coalesces concurrent calls for one pid; those calls now carry DIFFERENT `imp`s,
  * so coalescing before the merge would silently drop an importer's names and
- * produce a proxy missing exports nobody notices until runtime.
+ * produce a proxy missing exports nobody notices until runtime. (`seedProxyShape`
+ * is the one exception, and only because the shape it merges is read from the
+ * pid's sidecar and is therefore IDENTICAL for every coalesced caller — nothing
+ * caller-specific can be dropped. An importer's own `imp` never enters a flight.)
  */
 function mergeProxyShape(
   pid: string,
@@ -277,6 +335,7 @@ export async function ensureProxy(
   imp: ModuleImport,
   ctx: PreprocessContext,
 ): Promise<void> {
+  await seedProxyShape(pid, binding, ctx); // durable union across runs; awaited BEFORE the merge
   const grew = mergeProxyShape(pid, binding, imp, ctx);
   const key = ctx.policy.emittedPath(pid);
   if (!grew && (await ctx.cache.exists(key))) return;
@@ -287,7 +346,12 @@ export async function ensureProxy(
         ? { kind: "local", url: ctx.policy.servedUrl(merged.binding.url, pid) }
         : merged.binding;
     const body = proxyBody({ binding: wire, imp: merged.imp, registryKey: HOST_REGISTRY_KEY });
+    const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
     await writeText(ctx.cache, key, body);
+    // Sidecar AFTER the body, from the SAME snapshot: it can lag the artifact but
+    // never lead it, so a later run's seed is always a subset of what the emitted
+    // artifact already exports.
+    await writeText(ctx.cache, shapePath(pid, ctx), shape);
   });
 }
 
@@ -300,9 +364,11 @@ export async function ensureGlobalsProxy(
   names: string[],
   ctx: PreprocessContext,
 ): Promise<void> {
+  const globalsBinding: EndpointBinding = { kind: "host", name: "" };
+  await seedProxyShape(gid, globalsBinding, ctx); // durable union across runs
   const grew = mergeProxyShape(
     gid,
-    { kind: "host", name: "" },
+    globalsBinding,
     { names, hasDefault: false, hasNamespace: false },
     ctx,
   );
@@ -315,7 +381,9 @@ export async function ensureGlobalsProxy(
     const body = merged.imp.names
       .map((n, i) => `const __g${i} = ${ctx.globals[n]};\nexport { __g${i} as ${n} };`)
       .join("\n");
+    const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
     await writeText(ctx.cache, key, body);
+    await writeText(ctx.cache, shapePath(gid, ctx), shape);
   });
 }
 

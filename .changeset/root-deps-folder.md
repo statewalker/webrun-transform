@@ -28,7 +28,18 @@ both forms of the same subpath fails loudly with `conflicting bindings for one p
 path` rather than silently binding one of them. This is a deliberate trade for
 producing one identical URL under both the keep-ext server and the ext-map build.
 
+A proxy's accumulated export surface is now persisted beside its emitted artifact
+as a `<emitted-path>.shape.json` sidecar (the same sidecar convention as the
+build's `.hash` gate) and seeded back on the first touch of that proxy id. One
+proxy serves every importer in its module root, but the in-memory accumulator only
+lives for one run: an incremental build walks just the changed importers, so
+without the sidecar a rebuild would rewrite a shared proxy with only those
+importers' names and delete exports that unchanged, already-emitted modules still
+import. Emitted output therefore gains one extra small JSON file per proxy.
+
 New: `depsFolder` on `ModuleServerOptions` and `ProjectBuildOptions` renames the
-folder (default `"~deps"`). Proxy responses are now served `cache-control:
+folder (default `"~deps"`). Its value is a **reserved path segment**: any project
+id containing `/{depsFolder}/` is treated as generated — never walked, and 404'd by
+the server unless already cached. Proxy responses are now served `cache-control:
 no-cache`, because a proxy's export surface grows as more files of its module are
 transformed.

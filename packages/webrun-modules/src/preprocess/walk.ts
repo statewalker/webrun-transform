@@ -3,7 +3,14 @@ import { proxyId } from "../deps/proxy.js";
 import { analyze } from "../transform/analyze.js";
 import { detectInputType, isCssFile, isModuleFile, type PreprocessContext } from "./context.js";
 import { preprocessModule } from "./module.js";
-import { cssSpecifiers, ensureRawByKey, loadRaw, resolveCssSpec, resolveSpec } from "./resolve.js";
+import {
+  cssSpecifiers,
+  ensureGlobalsProxy,
+  ensureRawByKey,
+  loadRaw,
+  resolveCssSpec,
+  resolveSpec,
+} from "./resolve.js";
 
 /** BFS closure walk from an already-resolved entry id: analyze → resolve → emit
  *  each reachable module id (via `preprocessModule`), writing the `~deps` proxy
@@ -58,8 +65,17 @@ export async function walkFrom(entryId: string, ctx: PreprocessContext): Promise
       if (spec === "") {
         // Only allowlisted free globals get a proxy (matches preprocessModule);
         // real globals like `console`/`Math` are left as native references.
-        if (imports[""].names.some((n) => Object.hasOwn(ctx.globals, n))) {
-          queue.push(proxyId(id, "", ctx.depsFolder));
+        const used = imports[""].names.filter((n) => Object.hasOwn(ctx.globals, n));
+        if (used.length) {
+          const gid = proxyId(id, "", ctx.depsFolder);
+          // Ensure it HERE, in the spec loop, exactly like the named specifiers
+          // below: `jsTransform` is the only other caller and it sits behind the
+          // `ctx.skipTransform` gate, so an unchanged importer would never
+          // contribute its globals to the shared proxy and the accumulated name
+          // set would narrow. The merge is idempotent, so `jsTransform` keeping
+          // its own call costs nothing.
+          await ensureGlobalsProxy(gid, used, ctx);
+          queue.push(gid);
         }
         continue;
       }

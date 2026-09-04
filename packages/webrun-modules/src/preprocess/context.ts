@@ -110,9 +110,13 @@ export interface PreprocessContext {
   /**
    * Accumulated import shape + binding per proxy id. One proxy serves every
    * importer in its module root, so its export surface is the UNION of those
-   * importers' shapes rather than any single one. Growth-only within a run, so a
-   * proxy never loses an export an earlier importer already relies on. The
-   * free-globals proxy is stored here too, under the reserved `""` host binding.
+   * importers' shapes rather than any single one. Growth-only, so a proxy never
+   * loses an export an earlier importer already relies on: within a run through
+   * this map, and ACROSS runs because each proxy's shape is persisted to a
+   * `<emitted>.shape.json` sidecar and seeded back on the first touch of that
+   * proxy id (an incremental driver walks only the changed importers, so the map
+   * alone would start empty and narrow the shared proxy). The free-globals proxy
+   * is stored here too, under the reserved `""` host binding.
    */
   proxies: Map<string, { binding: EndpointBinding; imp: ModuleImport }>;
   policy: UrlPolicy;
