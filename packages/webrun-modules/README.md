@@ -419,8 +419,9 @@ however deep in the tree it sits.
 The folder's name is the `depsFolder` option (on both `newModuleServer` and
 `newProjectBuild`, default `"~deps"`); it must be a single path segment. Whatever
 you name it becomes a **reserved path segment for the whole project**: any id with
-`/{depsFolder}/` anywhere in it is treated as generated, so the walk never analyzes
-it and the server answers 404 for one that is not already in the cache. A real
+`/{depsFolder}/` anywhere in it is treated as generated — the walk skips analyzing
+it once its emitted artifact is in the cache, and the server answers 404 for one
+that is *not* in the cache rather than transforming it as a source. A real
 source directory of that name — `src/vendor/` under `depsFolder: "vendor"` — is
 therefore silently unreachable, so pick a name your sources do not use.
 

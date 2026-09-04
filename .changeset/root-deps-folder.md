@@ -37,6 +37,13 @@ without the sidecar a rebuild would rewrite a shared proxy with only those
 importers' names and delete exports that unchanged, already-emitted modules still
 import. Emitted output therefore gains one extra small JSON file per proxy.
 
+**Behaviour change:** a proxy's export set is consequently **monotone for the life
+of the cache** — it only ever grows. Removing the last importer of a name does not
+remove that name from the proxy; only clearing the cache (or deleting the proxy and
+its `.shape.json`) resets it. Each run re-emits every proxy it touches at least
+once, so a changed binding — a dependency version bump, a specifier moving between
+host-provided and bundled — still propagates into the emitted body.
+
 New: `depsFolder` on `ModuleServerOptions` and `ProjectBuildOptions` renames the
 folder (default `"~deps"`). Its value is a **reserved path segment**: any project
 id containing `/{depsFolder}/` is treated as generated — never walked, and 404'd by

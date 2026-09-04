@@ -33,12 +33,10 @@ function memSource(
   };
 }
 
-const PKGS = {
-  greet: {
-    version: "1.0.0",
-    files: { "index.js": `export const hi = "hi";\nexport const yo = "yo";` },
-  },
-};
+const GREET_SRC = `export const hi = "hi";\nexport const yo = "yo";\nexport const hey = "hey";`;
+
+const PKGS = { greet: { version: "1.0.0", files: { "index.js": GREET_SRC } } };
+const PKGS_V2 = { greet: { version: "2.0.0", files: { "index.js": GREET_SRC } } };
 
 /** MemFilesApi stamps `lastModified` with `Date.now()`; a couple of ms guarantees
  *  the scanner sees a distinct mtime after an edit. */
@@ -126,5 +124,64 @@ describe("newProjectBuild — a shared proxy never narrows across builds", () =>
     const warm = await readText(cache, "/~/~deps/~globals.js");
     expect(warm).toContain("as Buffer }");
     expect(warm).toContain("as process }");
+  });
+  it("re-emits the body with the CURRENT binding when a dependency's version changes", async () => {
+    // Seeding makes `grew` false whenever the shape did not grow, so the emitted
+    // body would otherwise never be rewritten and would keep pointing at the OLD
+    // endpoint forever. Worse, a LATER growth would pair the new url with a stale
+    // name set. A proxy id is derived from the specifier alone, so the pid is
+    // identical across the version change — only the binding moves.
+    const project = new MemFilesApi();
+    await writeText(project, "/a.ts", `import { hi } from "greet";\nexport const A = hi;`);
+    await writeText(project, "/b.ts", `import { yo } from "greet";\nexport const B = yo;`);
+    const cache = new MemFilesApi();
+
+    await newProjectBuild({ project, cache, sources: [memSource(PKGS)] }).build();
+    expect(await readText(cache, "/~/~deps/greet/index.js")).toContain("greet@1.0.0/index.js");
+
+    await tick();
+    await writeText(project, "/b.ts", `import { yo } from "greet";\nexport const B = yo + "!";`);
+
+    // Same project + cache, fresh engine, but `greet` now resolves to 2.0.0.
+    await newProjectBuild({ project, cache, sources: [memSource(PKGS_V2)] }).build();
+
+    const warm = await readText(cache, "/~/~deps/greet/index.js");
+    expect(warm).toContain("greet@2.0.0/index.js"); // the new binding propagated
+    expect(warm).not.toContain("greet@1.0.0/index.js");
+    expect(warm).toContain("hi"); // …without narrowing the accumulated shape
+    expect(warm).toContain("yo");
+  });
+
+  it("repairs a body that a torn write left narrower than its shape sidecar", async () => {
+    // A crash between the shape sidecar's write and the body's write leaves the
+    // sidecar LEADING the artifact. The next run must rebuild the body from the
+    // seeded union rather than trust the artifact, or the name the sidecar already
+    // promises stays missing from the emitted proxy forever.
+    const project = new MemFilesApi();
+    await writeText(project, "/a.ts", `import { hi } from "greet";\nexport const A = hi;`);
+    await writeText(project, "/b.ts", `import { yo } from "greet";\nexport const B = yo;`);
+    const cache = new MemFilesApi();
+    const sources = [memSource(PKGS)];
+
+    await newProjectBuild({ project, cache, sources }).build();
+    const shapePath = "/~/~deps/greet/index.js.shape.json";
+    expect(await readText(cache, "/~/~deps/greet/index.js")).not.toContain("hey");
+
+    // Simulate the torn state: the sidecar records a third importer's name, the
+    // body write never landed.
+    await writeText(
+      cache,
+      shapePath,
+      JSON.stringify({ names: ["hi", "yo", "hey"], hasDefault: false, hasNamespace: false }),
+    );
+
+    await tick();
+    await writeText(project, "/b.ts", `import { yo } from "greet";\nexport const B = yo + "!";`);
+    await newProjectBuild({ project, cache, sources }).build();
+
+    const warm = await readText(cache, "/~/~deps/greet/index.js");
+    expect(warm).toContain("hi");
+    expect(warm).toContain("yo");
+    expect(warm).toContain("hey"); // the sidecar's promise is honoured by the body
   });
 });

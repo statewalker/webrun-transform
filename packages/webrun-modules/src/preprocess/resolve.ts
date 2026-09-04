@@ -197,7 +197,9 @@ function bindingKey(b: EndpointBinding): string {
 
 /** Where a proxy's accumulated import shape is persisted, beside its emitted
  *  artifact — same `.<kind>` sidecar convention the build already uses for the
- *  per-id `.hash` gate. */
+ *  per-id `.hash` gate. The sidecar is written BEFORE the body it describes (see
+ *  the write callbacks), so a torn write can only ever leave it LEADING the
+ *  artifact, which the mandatory first-touch re-emit repairs. */
 function shapePath(pid: string, ctx: PreprocessContext): string {
   return `${ctx.policy.emittedPath(pid)}.shape.json`;
 }
@@ -218,7 +220,9 @@ function shapePath(pid: string, ctx: PreprocessContext): string {
  * pid share a single read via `singleFlight`. Only the import shape is persisted,
  * never the binding: a binding legitimately changes between runs (a version bump
  * moves a `local` endpoint url) and a stale persisted one would raise a spurious
- * `conflicting bindings` error.
+ * `conflicting bindings` error. The seeded shape is unioned under the CURRENT
+ * caller's binding, and the run's first touch of a pid always re-emits (see
+ * `ensureProxy`), so a changed binding still reaches the emitted body.
  */
 async function seedProxyShape(
   pid: string,
@@ -243,8 +247,8 @@ async function seedProxyShape(
       imp = undefined; // a corrupt sidecar degrades to the pre-seed behaviour
     }
     if (!imp) return;
-    // The sidecar describes the shape the CURRENT artifact was emitted from, so a
-    // seed alone never needs a re-emit; its `grew` is deliberately discarded.
+    // `grew` is discarded: the run's first touch of this pid re-emits unconditionally
+    // anyway, so nothing here needs to request a write.
     mergeProxyShape(pid, binding, imp, ctx);
   });
 }
@@ -256,10 +260,15 @@ async function seedProxyShape(
  * SYNCHRONOUS BY DESIGN, and it MUST run outside `singleFlight`. The flight
  * coalesces concurrent calls for one pid; those calls now carry DIFFERENT `imp`s,
  * so coalescing before the merge would silently drop an importer's names and
- * produce a proxy missing exports nobody notices until runtime. (`seedProxyShape`
- * is the one exception, and only because the shape it merges is read from the
- * pid's sidecar and is therefore IDENTICAL for every coalesced caller — nothing
- * caller-specific can be dropped. An importer's own `imp` never enters a flight.)
+ * produce a proxy missing exports nobody notices until runtime.
+ *
+ * `seedProxyShape` is the one call that DOES merge inside a flight. Its `imp` is
+ * read from the pid's sidecar, so no importer's names can be dropped there — but
+ * its `binding` IS caller-specific, and on the `!prev` path the winning caller's
+ * binding is what establishes the entry. That is nonetheless safe, and not because
+ * the payload is identical: it is safe because every caller re-merges its OWN
+ * binding through this function immediately after the flight resolves, so a
+ * genuine conflict still reaches the `conflicting bindings` guard and throws.
  */
 function mergeProxyShape(
   pid: string,
@@ -335,10 +344,20 @@ export async function ensureProxy(
   imp: ModuleImport,
   ctx: PreprocessContext,
 ): Promise<void> {
+  // FIRST touch of this pid in this run — checked BEFORE the seed populates the map.
+  const firstTouch = !ctx.proxies.has(pid);
   await seedProxyShape(pid, binding, ctx); // durable union across runs; awaited BEFORE the merge
   const grew = mergeProxyShape(pid, binding, imp, ctx);
   const key = ctx.policy.emittedPath(pid);
-  if (!grew && (await ctx.cache.exists(key))) return;
+  // The run's first touch ALWAYS re-emits, even when the seeded shape did not grow.
+  // The body is a function of the shape AND the binding (plus everything else
+  // `proxyBody` renders), and only the shape is persisted: without this a changed
+  // binding — a version bump moving a `local` endpoint url, a `host` ↔ `local` flip,
+  // a registry change — would leave the old body in place forever, and a later
+  // growth would then pair the NEW url with a name set that predates it. It also
+  // makes a torn body/sidecar state self-healing: the body is rebuilt from the
+  // seeded union rather than trusted. Subsequent touches keep the growth-only rule.
+  if (!firstTouch && !grew && (await ctx.cache.exists(key))) return;
   return queueProxyWrite(ctx, pid, async () => {
     const merged = ctx.proxies.get(pid) as { binding: EndpointBinding; imp: ModuleImport };
     const wire: EndpointBinding =
@@ -347,11 +366,12 @@ export async function ensureProxy(
         : merged.binding;
     const body = proxyBody({ binding: wire, imp: merged.imp, registryKey: HOST_REGISTRY_KEY });
     const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
-    await writeText(ctx.cache, key, body);
-    // Sidecar AFTER the body, from the SAME snapshot: it can lag the artifact but
-    // never lead it, so a later run's seed is always a subset of what the emitted
-    // artifact already exports.
+    // Sidecar BEFORE the body, from the SAME snapshot. A torn write must leave the
+    // sidecar LEADING the artifact, never lagging it: a leading sidecar is repaired
+    // by the next run's mandatory first-touch re-emit, whereas a lagging one would
+    // seed a union narrower than what the artifact already exports and re-narrow it.
     await writeText(ctx.cache, shapePath(pid, ctx), shape);
+    await writeText(ctx.cache, key, body);
   });
 }
 
@@ -365,6 +385,7 @@ export async function ensureGlobalsProxy(
   ctx: PreprocessContext,
 ): Promise<void> {
   const globalsBinding: EndpointBinding = { kind: "host", name: "" };
+  const firstTouch = !ctx.proxies.has(gid); // checked BEFORE the seed populates the map
   await seedProxyShape(gid, globalsBinding, ctx); // durable union across runs
   const grew = mergeProxyShape(
     gid,
@@ -373,7 +394,10 @@ export async function ensureGlobalsProxy(
     ctx,
   );
   const key = ctx.policy.emittedPath(gid);
-  if (!grew && (await ctx.cache.exists(key))) return;
+  // First touch always re-emits — same rule, same reasons, as `ensureProxy`: the
+  // body splices in `ctx.globals[n]` expressions that are NOT part of the persisted
+  // shape and can change between runs (a different target, a user override).
+  if (!firstTouch && !grew && (await ctx.cache.exists(key))) return;
   return queueProxyWrite(ctx, gid, async () => {
     const merged = ctx.proxies.get(gid) as { binding: EndpointBinding; imp: ModuleImport };
     // Alias form (`const __gI = <expr>; export { __gI as name }`) avoids a TDZ
@@ -382,8 +406,8 @@ export async function ensureGlobalsProxy(
       .map((n, i) => `const __g${i} = ${ctx.globals[n]};\nexport { __g${i} as ${n} };`)
       .join("\n");
     const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
+    await writeText(ctx.cache, shapePath(gid, ctx), shape); // leads the body — see `ensureProxy`
     await writeText(ctx.cache, key, body);
-    await writeText(ctx.cache, shapePath(gid, ctx), shape);
   });
 }
 
