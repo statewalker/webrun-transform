@@ -26,7 +26,16 @@ const ENTRIES = [
   { pkg: "lodash-es", version: "^4", subpath: "merge" },
 ];
 
-const IMPORT_RE = /(?:from|import)\s*["']([^"']+)["']/g;
+// Matches both static forms (`from "…"`, side-effect `import "…"`) and the
+// dynamic form (`import("…")`) — the optional `\(?` covers the parenthesis that
+// sits between `import` and the quote in the dynamic case.
+const IMPORT_RE = /(?:from|import)\s*\(?\s*["']([^"']+)["']/g;
+
+// A module root is either the project root (`~`, for authored sources) or an npm
+// package root (`{name}@{version}`, scope-aware) — see `depsRoot` in
+// `src/deps/proxy.ts`. Every proxy must sit directly under one of these, never
+// under an importer's own path.
+const MODULE_ROOT_RE = /^(?:@[^/]+\/)?[^/]+@[^/]+$/;
 
 /** Resolve a relative specifier against a module's own absolute URL path. */
 function resolveAgainst(fromPath: string, spec: string): string {
@@ -42,6 +51,8 @@ const server = newModuleServer({
 
 let failures = 0;
 let checked = 0;
+let bodiesChecked = 0;
+let proxyRootsValidated = 0;
 
 for (const entry of ENTRIES) {
   const label = `${entry.pkg}${entry.subpath ? `/${entry.subpath}` : ""}`;
@@ -54,13 +65,25 @@ for (const entry of ENTRIES) {
   // or `<root>/~deps/<spec>.js` or `<root>/~deps/~globals.js` — never nested under
   // an importer's filename, which is what the old layout produced.
   for (const u of proxies) {
-    const after = u.slice(u.indexOf("/~deps/") + "/~deps/".length);
+    const idx = u.indexOf("/~deps/");
+    const before = u.slice(0, idx).replace(/^\/+/, "");
+    const after = u.slice(idx + "/~deps/".length);
     if (/\.[cm]?[jt]sx?\/deps\./.test(u)) {
       console.error(`  ✗ old co-located layout leaked through: ${u}`);
       failures++;
     }
     if (after.split("/").length > 3) {
       console.error(`  ✗ unexpectedly deep proxy path: ${u}`);
+      failures++;
+    }
+    // The part BEFORE `/~deps/` must itself be exactly a module root — `~` (the
+    // project root) or `{name}@{version}` (scope-aware) — never an importer's own
+    // path (e.g. `pkg@1.0.0/src/foo.js`), which is what wrong nesting looks like.
+    proxyRootsValidated++;
+    if (before !== "~" && !MODULE_ROOT_RE.test(before)) {
+      console.error(
+        `  ✗ proxy not rooted at a module root: ${u} (root segment: ${JSON.stringify(before)})`,
+      );
       failures++;
     }
   }
@@ -80,6 +103,22 @@ for (const entry of ENTRIES) {
       continue;
     }
     const body = await res.text();
+    bodiesChecked++;
+    if (body.trim().length === 0) {
+      console.error(`  ✗ ${url} → 200 with an EMPTY body`);
+      failures++;
+      continue;
+    }
+    // Every proxy body form (`export {…} from`, `export *`, `export default`,
+    // `export const`, the `host` shim's `export default`/`export const`) contains
+    // the token "export" — an empty-string transform overwriting a proxy body
+    // (a real failure mode seen in an earlier task) still reports 200 but would
+    // fail this.
+    if (url.includes("/~deps/") && !body.includes("export")) {
+      console.error(`  ✗ ${url} → proxy body has no "export" (truncated/wrong body)`);
+      failures++;
+      continue;
+    }
     for (const m of body.matchAll(IMPORT_RE)) {
       const spec = m[1];
       if (!spec.startsWith(".")) {
@@ -101,5 +140,8 @@ for (const entry of ENTRIES) {
   console.log(`  ok`);
 }
 
-console.log(`\n${checked} relative imports resolved, ${failures} failures`);
+console.log(
+  `\n${checked} relative imports resolved, ${bodiesChecked} bodies checked, ` +
+    `${proxyRootsValidated} proxy roots validated, ${failures} failures`,
+);
 if (failures) process.exit(1);
