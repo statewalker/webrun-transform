@@ -1,13 +1,61 @@
+import type {
+  FileInfo,
+  FileStats,
+  FilesApi,
+  ListOptions,
+  ReadOptions,
+} from "@statewalker/webrun-files";
 import { readText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it } from "vitest";
 import type { PreprocessContext } from "../src/preprocess/context.js";
 import { ensureGlobalsProxy, ensureProxy } from "../src/preprocess/resolve.js";
 
+/**
+ * Delays the FIRST call to `write` so it settles after a later call — makes a
+ * same-key write race deterministic instead of relying on FIFO luck. Delegates
+ * every other method verbatim.
+ */
+class DelayFirstWriteFilesApi implements FilesApi {
+  private writeCount = 0;
+  constructor(private readonly delegate: FilesApi) {}
+
+  write(path: string, content: Iterable<Uint8Array> | AsyncIterable<Uint8Array>): Promise<void> {
+    const isFirst = ++this.writeCount === 1;
+    const run = () => this.delegate.write(path, content);
+    return isFirst ? new Promise<void>((resolve) => setTimeout(resolve, 20)).then(run) : run();
+  }
+
+  read(path: string, options?: ReadOptions): AsyncIterable<Uint8Array> {
+    return this.delegate.read(path, options);
+  }
+  mkdir(path: string): Promise<void> {
+    return this.delegate.mkdir(path);
+  }
+  list(path: string, options?: ListOptions): AsyncIterable<FileInfo> {
+    return this.delegate.list(path, options);
+  }
+  stats(path: string): Promise<FileStats | undefined> {
+    return this.delegate.stats(path);
+  }
+  exists(path: string): Promise<boolean> {
+    return this.delegate.exists(path);
+  }
+  remove(path: string): Promise<boolean> {
+    return this.delegate.remove(path);
+  }
+  move(source: string, target: string): Promise<boolean> {
+    return this.delegate.move(source, target);
+  }
+  copy(source: string, target: string): Promise<boolean> {
+    return this.delegate.copy(source, target);
+  }
+}
+
 /** A partial context carrying only what the proxy writers touch. The codebase
  *  already casts partial contexts in tests (see webrun-modules-build's
  *  url-policy.test.ts), because building a full context needs a network source. */
-function mkCtx(cache: MemFilesApi): PreprocessContext {
+function mkCtx(cache: FilesApi): PreprocessContext {
   return {
     cache,
     depsPath: "",
@@ -62,6 +110,26 @@ describe("proxy shape accumulation", () => {
     // The regression test for the single-flight hazard: coalescing two calls that
     // carry DIFFERENT imps would drop the loser's names.
     const cache = new MemFilesApi();
+    const ctx = mkCtx(cache);
+    await Promise.all([
+      ensureProxy(PID, HOST, { names: ["useState"], hasDefault: false, hasNamespace: false }, ctx),
+      ensureProxy(PID, HOST, { names: ["useEffect"], hasDefault: false, hasNamespace: false }, ctx),
+    ]);
+    const body = await readText(cache, "/t/browser/~/~deps/react/index.js");
+    expect(body).toContain("export const useState = __m.useState");
+    expect(body).toContain("export const useEffect = __m.useEffect");
+  });
+
+  it("keeps the fuller shape even when the stale write settles LAST", async () => {
+    // Regression test for the write-ordering hazard: two `ensureProxy` calls for
+    // one pid build their bodies at different times and `await writeText` onto
+    // the SAME cache key with nothing ordering the two writes. This wraps the
+    // cache so the FIRST write (the thinner, stale one, built before the second
+    // importer's shape merged in) settles strictly after the second (fuller)
+    // write — reproducing the exact interleaving that a plain `Promise.all` only
+    // reproduces by FIFO luck. If the stale write lands last, it silently wins
+    // and `ctx.proxies` already holds the union, so nothing ever repairs it.
+    const cache = new DelayFirstWriteFilesApi(new MemFilesApi());
     const ctx = mkCtx(cache);
     await Promise.all([
       ensureProxy(PID, HOST, { names: ["useState"], hasDefault: false, hasNamespace: false }, ctx),

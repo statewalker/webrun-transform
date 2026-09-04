@@ -243,6 +243,28 @@ function mergeProxyShape(
   return grew;
 }
 
+/** Serialize writes per proxy id. Each link builds its body from the LIVE
+ *  accumulated shape when it RUNS, not when it is queued, so a stale body can
+ *  never land after a fuller one — the last write always carries the union.
+ *  Two `ensureProxy` calls for one pid now carry DIFFERENT `imp`s and settle at
+ *  different times; without this chain their writes race unordered onto the
+ *  SAME cache key, and a slow write for a thinner shape can silently overwrite
+ *  a fuller one that already landed — permanently, since `ctx.proxies` already
+ *  holds the union and a later call sees `grew === false` and skips the write. */
+function queueProxyWrite(
+  ctx: PreprocessContext,
+  pid: string,
+  write: () => Promise<void>,
+): Promise<void> {
+  const key = `proxywrite:${pid}`;
+  const prev = (ctx.inflight.get(key) as Promise<unknown> | undefined) ?? Promise.resolve();
+  const next = prev.then(write, write); // a failed link must not stall the chain
+  ctx.inflight.set(key, next);
+  return next.finally(() => {
+    if (ctx.inflight.get(key) === next) ctx.inflight.delete(key);
+  });
+}
+
 /** Generate + cache a proxy module. One proxy serves every importer in its module
  *  root, so the body is built from the ACCUMULATED shape (see `mergeProxyShape`)
  *  and re-emitted whenever that shape grows. A `local` endpoint's URL is shaped
@@ -256,15 +278,14 @@ export async function ensureProxy(
   ctx: PreprocessContext,
 ): Promise<void> {
   const grew = mergeProxyShape(pid, binding, imp, ctx);
-  const merged = ctx.proxies.get(pid) as { binding: EndpointBinding; imp: ModuleImport };
   const key = ctx.policy.emittedPath(pid);
   if (!grew && (await ctx.cache.exists(key))) return;
-  const rev = `${merged.imp.names.length}:${merged.imp.hasDefault}:${merged.imp.hasNamespace}`;
-  return singleFlight(ctx, `proxy:${pid}:${rev}`, async () => {
+  return queueProxyWrite(ctx, pid, async () => {
+    const merged = ctx.proxies.get(pid) as { binding: EndpointBinding; imp: ModuleImport };
     const wire: EndpointBinding =
-      binding.kind === "local"
-        ? { kind: "local", url: ctx.policy.servedUrl(binding.url, pid) }
-        : binding;
+      merged.binding.kind === "local"
+        ? { kind: "local", url: ctx.policy.servedUrl(merged.binding.url, pid) }
+        : merged.binding;
     const body = proxyBody({ binding: wire, imp: merged.imp, registryKey: HOST_REGISTRY_KEY });
     await writeText(ctx.cache, key, body);
   });
@@ -285,10 +306,10 @@ export async function ensureGlobalsProxy(
     { names, hasDefault: false, hasNamespace: false },
     ctx,
   );
-  const merged = ctx.proxies.get(gid) as { binding: EndpointBinding; imp: ModuleImport };
   const key = ctx.policy.emittedPath(gid);
   if (!grew && (await ctx.cache.exists(key))) return;
-  return singleFlight(ctx, `globals:${gid}:${merged.imp.names.length}`, async () => {
+  return queueProxyWrite(ctx, gid, async () => {
+    const merged = ctx.proxies.get(gid) as { binding: EndpointBinding; imp: ModuleImport };
     // Alias form (`const __gI = <expr>; export { __gI as name }`) avoids a TDZ
     // ReferenceError for a global whose expression is the bare `globalThis` token.
     const body = merged.imp.names
