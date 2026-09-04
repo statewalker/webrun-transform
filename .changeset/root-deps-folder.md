@@ -44,6 +44,12 @@ its `.shape.json`) resets it. Each run re-emits every proxy it touches at least
 once, so a changed binding — a dependency version bump, a specifier moving between
 host-provided and bundled — still propagates into the emitted body.
 
+Those two behaviours meet at one sharp edge: if a dependency is upgraded to a
+version that no longer exports a name the cache still remembers, the re-emitted
+proxy carries `export { gone } from "<new-url>"` and fails to link at load. Clear
+the cache (or delete that proxy and its `.shape.json`) after an upgrade that drops
+an export.
+
 New: `depsFolder` on `ModuleServerOptions` and `ProjectBuildOptions` renames the
 folder (default `"~deps"`). Its value is a **reserved path segment**: any project
 id containing `/{depsFolder}/` is treated as generated — never walked, and 404'd by
