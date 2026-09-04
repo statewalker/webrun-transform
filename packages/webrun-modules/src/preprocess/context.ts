@@ -92,6 +92,8 @@ export interface PreprocessContext {
   basePath: string;
   /** Normalized deps prefix (relative to `basePath`); `""` when unset. */
   depsPath: string;
+  /** Name of the per-module-root folder holding dependency proxies. Default `"~deps"`. */
+  depsFolder: string;
   tRoot: string;
   lock: Lockfile;
   sources: Source[];
@@ -134,6 +136,18 @@ export interface PreprocessContext {
  *  cross-prefix imports resolve correctly. Core-owned (shared across policies). */
 export function urlPath(id: string, ctx: PreprocessContext): string {
   return id.startsWith("~/") ? id : ctx.depsPath + id;
+}
+
+/** Validate a deps folder name: exactly one non-empty path segment, never a
+ *  traversal. It is spliced into ids verbatim, so a `/` or a `..` here would
+ *  silently relocate every proxy. */
+export function normalizeDepsFolder(name: string): string {
+  if (!name || name.includes("/") || name === "." || name === "..") {
+    throw new Error(
+      `depsFolder must be a single non-empty path segment, got ${JSON.stringify(name)}`,
+    );
+  }
+  return name;
 }
 
 /** Target-derived injectable free-global allowlist → module expressions. */

@@ -20,7 +20,8 @@ export async function walkFrom(entryId: string, ctx: PreprocessContext): Promise
     seen.add(id);
     // `~deps` proxies are pre-generated at their emitted path by their importer's
     // resolveSpec/preprocessModule — served from cache, never re-analyzed.
-    if (id.includes("/~deps/") && (await ctx.cache.exists(ctx.policy.emittedPath(id)))) continue;
+    if (id.includes(`/${ctx.depsFolder}/`) && (await ctx.cache.exists(ctx.policy.emittedPath(id))))
+      continue;
     if (isCssFile(id)) {
       const { path, source } = await loadRaw(id, ctx);
       // Opt-in gate: skip re-transform when the artifact is already current, but
@@ -58,7 +59,7 @@ export async function walkFrom(entryId: string, ctx: PreprocessContext): Promise
         // Only allowlisted free globals get a proxy (matches preprocessModule);
         // real globals like `console`/`Math` are left as native references.
         if (imports[""].names.some((n) => Object.hasOwn(ctx.globals, n))) {
-          queue.push(proxyId(id, ""));
+          queue.push(proxyId(id, "", ctx.depsFolder));
         }
         continue;
       }

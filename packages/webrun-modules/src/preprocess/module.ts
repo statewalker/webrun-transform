@@ -74,7 +74,7 @@ export async function jsTransform(
   const usedGlobals = (imports[""]?.names ?? []).filter((n) => Object.hasOwn(ctx.globals, n));
   let prelude = "";
   if (usedGlobals.length) {
-    const gid = proxyId(id, "");
+    const gid = proxyId(id, "", ctx.depsFolder);
     await ensureGlobalsProxy(gid, usedGlobals, ctx);
     prelude = `import { ${usedGlobals.join(", ")} } from ${JSON.stringify(
       relativeUrl(urlPath(id, ctx), urlPath(gid, ctx)),

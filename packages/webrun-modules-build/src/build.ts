@@ -12,6 +12,7 @@ import {
   newDefaultTransform,
   newDefaultTransformRegistry,
   newHostRegistry,
+  normalizeDepsFolder,
   npmRegistrySource,
   type PreprocessContext,
   type Source,
@@ -37,6 +38,8 @@ export interface ProjectBuildOptions {
   transform?: Transform;
   /** Override the CSS transform (default `newDefaultCssTransform()`); a test seam. */
   css?: CssTransform;
+  /** Name of the per-module-root folder holding dependency proxies (default `"~deps"`). */
+  depsFolder?: string;
 }
 
 /** A prepared batch build over a project. */
@@ -79,6 +82,7 @@ export function newProjectBuild(opts: ProjectBuildOptions): ProjectBuild {
     target,
     basePath: "/",
     depsPath: "",
+    depsFolder: normalizeDepsFolder(opts.depsFolder ?? "~deps"),
     tRoot: `/t/${target}`,
     lock: {},
     sources: opts.sources ?? [npmRegistrySource()],

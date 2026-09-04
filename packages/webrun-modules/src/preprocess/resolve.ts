@@ -140,9 +140,9 @@ export async function ensurePackage(
 }
 
 /** Resolve an import specifier (from `fromId`) to what to emit + its cache id. A
- *  bare external specifier is rewritten to a co-located `~deps` proxy; the proxy's
- *  real endpoint (for a `local` binding) is returned as `endpointId` so the graph
- *  walker caches it. */
+ *  bare external specifier is rewritten to a proxy in the importer's module-root
+ *  deps folder; the proxy's real endpoint (for a `local` binding) is returned as
+ *  `endpointId` so the graph walker caches it. */
 export async function resolveSpec(
   spec: string,
   fromId: string,
@@ -171,7 +171,7 @@ export async function resolveSpec(
     if (id && isCssFile(id)) return { url: ctx.policy.servedUrl(id, fromId), id };
   }
   // Bare external specifier → generate a co-located proxy; import the proxy.
-  const pid = proxyId(fromId, spec);
+  const pid = proxyId(fromId, spec, ctx.depsFolder);
   let binding: EndpointBinding;
   let endpointId: string | undefined;
   if (provided) {
