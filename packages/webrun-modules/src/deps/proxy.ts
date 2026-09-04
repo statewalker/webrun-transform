@@ -1,19 +1,40 @@
+import { parseSpecifier } from "../server/specifiers.js";
 import type { EndpointBinding, ModuleImport } from "../types.js";
 
 const IDENT_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
-/** Slug a specifier into a filename-safe segment ("react/jsx-runtime" → "react__jsx-runtime"). */
-function slug(specifier: string): string {
-  return specifier === "" ? "globals" : specifier.replace(/\//g, "__");
+/** The module root that owns a `~deps/`: the project root (`~`) for authored
+ *  sources, the package root (`{name}@{version}`) for npm files. The `""` fallback
+ *  is defensive — every id reaching here is one of those two forms, because they
+ *  are the only forms `loadRaw` accepts. */
+export function depsRoot(importerId: string): string {
+  if (importerId.startsWith("~/")) return "~";
+  return importerId.match(/^((?:@[^/]+\/)?[^/]+@[^/]+)\//)?.[1] ?? "";
 }
 
-/** Co-located per-module proxy id for one external specifier root. */
-export function proxyId(importerId: string, specifier: string): string {
-  const slash = importerId.lastIndexOf("/");
-  const dir = slash >= 0 ? importerId.slice(0, slash) : "";
-  const base = slash >= 0 ? importerId.slice(slash + 1) : importerId;
-  const prefix = dir ? `${dir}/` : "";
-  return `${prefix}~deps/${base}/deps.${slug(specifier)}.js`;
+/**
+ * Path of one specifier's proxy inside its module's deps folder.
+ *
+ * Derived from the SPECIFIER ALONE, never from the resolved package: a `host`
+ * binding short-circuits before any package is loaded, so there is no manifest to
+ * read — and a specifier-derived path is what keeps a URL stable when a dependency
+ * is swapped between host-provided and bundled, which is the whole point of the
+ * folder. Extensions normalize to `.js` HERE rather than in the URL policy, so the
+ * keep-ext server and the ext-map build produce one identical URL.
+ */
+export function depsEntryPath(specifier: string): string {
+  if (specifier === "") return "~globals.js"; // the reserved free-globals pseudo-module
+  const { pkg, subpath } = parseSpecifier(specifier);
+  if (!subpath) return `${pkg}/index.js`;
+  return `${pkg}/${subpath.replace(/\.(?:m|c)?[jt]sx?$/i, "")}.js`;
+}
+
+/** Proxy id for one external specifier, in its importer's module-root deps folder.
+ *  Every file of a module shares one proxy per specifier. */
+export function proxyId(importerId: string, specifier: string, depsFolder = "~deps"): string {
+  const root = depsRoot(importerId);
+  const prefix = root ? `${root}/` : "";
+  return `${prefix}${depsFolder}/${depsEntryPath(specifier)}`;
 }
 
 /**

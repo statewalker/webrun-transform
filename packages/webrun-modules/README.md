@@ -409,10 +409,18 @@ Also exported: `untarTgz(bytes)` (isomorphic npm-tarball unpacker),
 ## The `~deps` proxy layer
 
 Every external/free-global reference a module makes is rewritten to import a
-small **co-located proxy** (`./~deps/{module}/deps.{name}.js`) instead of the
-bare specifier directly. The module's own bytes are therefore always portable —
-same relative imports whether the target is `local`, `host`, or `cdn` — and the
-per-import proxy is what actually resolves the binding:
+small **proxy** from that module's own deps folder — `~deps/{specifier}/index.js`
+for a package, `~deps/{specifier}.js` for a subpath, `~deps/~globals.js` for free
+globals. Each module has exactly one such folder, at its root: the project root
+for authored sources, and `{name}@{version}/` for an npm package. So every file
+of a module resolves `react` through the one file `~deps/react/index.js`,
+however deep in the tree it sits.
+
+That concentration is the point. The proxy is the seam at which a dependency can
+be substituted — for a host-provided singleton, a pinned build, a patched copy —
+and one predictable file per module is a seam you can actually operate on. The
+module's own bytes stay portable either way: the same relative imports whether the
+target is `local`, `host`, or `cdn`, with the proxy resolving the binding:
 
 - **`provided`** — names bound to **live host instances** (e.g. the page's own
   `react`, or an app-defined class used as a `Map` key elsewhere) instead of a

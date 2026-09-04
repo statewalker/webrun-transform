@@ -62,7 +62,7 @@ describe("newProjectBuild — golden batch build", () => {
     expect(await cache.exists("/~/main.js")).toBe(true);
     const main = await readText(cache, "/~/main.js");
     expect(main).toContain(`from "./util.js"`); // sibling ext-mapped .ts → .js
-    expect(main).toContain(`from "./~deps/main.tsx/deps.greet.js"`); // bare dep → proxy
+    expect(main).toContain(`from "./~deps/greet/index.js"`); // bare dep → proxy
     expect(main).not.toContain(`from "greet"`); // no bare specifier survives
     expect(main).not.toContain(`: string`); // TS stripped
 
@@ -71,8 +71,8 @@ describe("newProjectBuild — golden batch build", () => {
 
     // The `~deps` proxy body — a walk side-effect into cache — re-exports the
     // resolved npm endpoint (same proxy naming the server produces).
-    expect(await cache.exists("/~/~deps/main.tsx/deps.greet.js")).toBe(true);
-    const proxy = await readText(cache, "/~/~deps/main.tsx/deps.greet.js");
+    expect(await cache.exists("/~/~deps/greet/index.js")).toBe(true);
+    const proxy = await readText(cache, "/~/~deps/greet/index.js");
     expect(proxy).toContain(`greet@1.0.0/index.js`);
 
     // The served pointer names the emitted entry artifact.

@@ -89,10 +89,10 @@ describe("newModuleServer", () => {
     const res = await s.fetch(req("/greet@1.0.0/index.js"));
     expect(res.headers.get("content-type")).toBe("text/javascript");
     const body = await res.text();
-    expect(body).toContain(`from "./~deps/index.js/deps.shout.js"`); // proxy, not bare pkg
+    expect(body).toContain(`from "./~deps/shout/index.js"`); // proxy, not bare pkg
     expect(body).not.toContain(`from "shout"`); // no bare specifier survives
     // the proxy re-exports the pinned local endpoint
-    const proxy = await (await s.fetch(req("/greet@1.0.0/~deps/index.js/deps.shout.js"))).text();
+    const proxy = await (await s.fetch(req("/greet@1.0.0/~deps/shout/index.js"))).text();
     expect(proxy).toContain(`shout@2.3.1/index.js`);
   });
 
@@ -150,8 +150,8 @@ describe("newModuleServer", () => {
     const res = await s.fetch(req("/deps/v1/greet@1.0.0/index.js"));
     expect(res.status).toBe(200);
     // relative internal imports (incl. the ~deps proxy) keep bytes portable across prefixes
-    expect(await res.text()).toContain(`from "./~deps/index.js/deps.shout.js"`);
-    const proxy = await s.fetch(req("/deps/v1/greet@1.0.0/~deps/index.js/deps.shout.js"));
+    expect(await res.text()).toContain(`from "./~deps/shout/index.js"`);
+    const proxy = await s.fetch(req("/deps/v1/greet@1.0.0/~deps/shout/index.js"));
     expect(await proxy.text()).toContain(`shout@2.3.1/index.js`);
   });
 
@@ -167,12 +167,12 @@ describe("newModuleServer", () => {
     // project file served at ~/ (no deps prefix)
     const pr = await s.resolve({ url: "/~/client/main.ts" });
     expect(pr.url).toBe("/~/client/main.ts");
-    // its bare import is rewritten to a co-located ~deps proxy (proxy stays at ~/)
+    // its bare import is rewritten to the project-root ~deps proxy
     const main = await (await s.fetch(req("/~/client/main.ts"))).text();
-    expect(main).toContain(`from "./~deps/main.ts/deps.greet.js"`);
+    expect(main).toContain(`from "../~deps/greet/index.js"`);
     expect(main).not.toContain(`from "greet"`);
     // the proxy re-exports the endpoint served under /deps/ (crosses the prefix)
-    const greetProxy = await (await s.fetch(req("/~/client/~deps/main.ts/deps.greet.js"))).text();
+    const greetProxy = await (await s.fetch(req("/~/~deps/greet/index.js"))).text();
     expect(greetProxy).toContain(`deps/greet@1.0.0/index.js`);
 
     // packages resolve + serve under /deps/
@@ -181,10 +181,8 @@ describe("newModuleServer", () => {
     const greet = await s.fetch(req("/deps/greet@1.0.0/index.js"));
     expect(greet.status).toBe(200);
     // greet→shout also goes through a proxy; its endpoint stays within /deps/
-    expect(await greet.text()).toContain(`./~deps/index.js/deps.shout.js`);
-    const shoutProxy = await (
-      await s.fetch(req("/deps/greet@1.0.0/~deps/index.js/deps.shout.js"))
-    ).text();
+    expect(await greet.text()).toContain(`./~deps/shout/index.js`);
+    const shoutProxy = await (await s.fetch(req("/deps/greet@1.0.0/~deps/shout/index.js"))).text();
     expect(shoutProxy).toContain(`shout@2.3.1/index.js`);
 
     // listResources carries the deps prefix for the pinned endpoints
@@ -217,10 +215,10 @@ describe("newModuleServer", () => {
     const r = await s.resolve({ url: "/src/app.ts" });
     expect(r.url).toBe("/~/src/app.ts");
     const body = await (await s.fetch(req("/~/src/app.ts"))).text();
-    expect(body).toContain(`from "./~deps/app.ts/deps.greet.js"`); // proxy indirection
+    expect(body).toContain(`from "../~deps/greet/index.js"`); // proxy indirection
     expect(body).not.toContain(`from "greet"`);
     expect(body).not.toContain(": string"); // TS stripped
-    const proxy = await (await s.fetch(req("/~/src/~deps/app.ts/deps.greet.js"))).text();
+    const proxy = await (await s.fetch(req("/~/~deps/greet/index.js"))).text();
     expect(proxy).toContain(`greet@1.0.0/index.js`);
   });
 
@@ -235,7 +233,7 @@ describe("newModuleServer", () => {
     const urls = await s.listResources({ pkg: "greet" });
     expect(urls).toEqual([
       "/greet@1.0.0/index.js",
-      "/greet@1.0.0/~deps/index.js/deps.shout.js",
+      "/greet@1.0.0/~deps/shout/index.js",
       "/shout@2.3.1/index.js",
     ]);
   });
