@@ -96,7 +96,10 @@ describe("version dedupe & lockfile", () => {
 
 /** A source with per-version files + declared dependencies. */
 function nestSource(
-  pkgs: Record<string, Record<string, { files: Record<string, string>; deps?: Record<string, string> }>>,
+  pkgs: Record<
+    string,
+    Record<string, { files: Record<string, string>; deps?: Record<string, string> }>
+  >,
 ): Source {
   return {
     matches: (ref) => "pkg" in ref && ref.pkg in pkgs,
@@ -126,7 +129,12 @@ function nestSource(
 
 const NEST = {
   self: {
-    "1.0.0": { files: { "index.js": `export const v = "1.0.0";`, "sub/inner.js": `export { v } from "self";` } },
+    "1.0.0": {
+      files: {
+        "index.js": `export const v = "1.0.0";`,
+        "sub/inner.js": `export { v } from "self";`,
+      },
+    },
     "2.0.0": { files: { "index.js": `export const v = "2.0.0";` } },
   },
   app: {
@@ -142,18 +150,18 @@ describe("importer-context version resolution", () => {
   it("resolves a package's self-reference to its own version (not latest)", async () => {
     const s = newModuleServer({ cache: new MemFilesApi(), sources: [nestSource(NEST)] });
     const body = await (await s.fetch(req("/self@1.0.0/sub/inner.js"))).text();
-    expect(body).toContain(`from "./~deps/inner.js/deps.self.js"`); // proxy indirection
+    expect(body).toContain(`from "../~deps/self/index.js"`); // proxy indirection
     // the proxy re-exports self@1.0.0's own index (relative, within its tree), not @2.0.0
-    const proxy = await (await s.fetch(req("/self@1.0.0/sub/~deps/inner.js/deps.self.js"))).text();
-    expect(proxy).toContain(`../../../index.js`); // self@1.0.0's own index, relative
+    const proxy = await (await s.fetch(req("/self@1.0.0/~deps/self/index.js"))).text();
+    expect(proxy).toContain(`../../index.js`); // self@1.0.0's own index, relative
     expect(proxy).not.toContain("self@2.0.0"); // not the global latest
   });
 
   it("resolves a dependency to the importer's declared range (not latest)", async () => {
     const s = newModuleServer({ cache: new MemFilesApi(), sources: [nestSource(NEST)] });
     const body = await (await s.fetch(req("/app@1.0.0/index.js"))).text();
-    expect(body).toContain(`from "./~deps/index.js/deps.lib.js"`); // proxy indirection
-    const proxy = await (await s.fetch(req("/app@1.0.0/~deps/index.js/deps.lib.js"))).text();
+    expect(body).toContain(`from "./~deps/lib/index.js"`); // proxy indirection
+    const proxy = await (await s.fetch(req("/app@1.0.0/~deps/lib/index.js"))).text();
     expect(proxy).toContain(`lib@1.2.0/index.js`); // app's ^1.0.0 → 1.2.0
     expect(proxy).not.toContain("lib@2.1.0"); // not the global latest
   });
@@ -184,11 +192,11 @@ describe("isomorphic parity (NodeFilesApi real disk)", () => {
     const r = await s.resolve({ pkg: "app" });
     expect(r.url).toBe("/app@1.0.0/index.js");
     const body = await (await s.fetch(req("/app@1.0.0/index.js"))).text();
-    expect(body).toContain(`from "./~deps/index.js/deps.lib.js"`); // proxy indirection on disk
+    expect(body).toContain(`from "./~deps/lib/index.js"`); // proxy indirection on disk
     // the proxy (also cached on real disk) re-exports the pinned endpoint (latest lib)
-    const proxy = await (await s.fetch(req("/app@1.0.0/~deps/index.js/deps.lib.js"))).text();
+    const proxy = await (await s.fetch(req("/app@1.0.0/~deps/lib/index.js"))).text();
     expect(proxy).toContain("lib@2.1.0/index.js");
-    expect(await readText(cache, "/t/browser/app@1.0.0/~deps/index.js/deps.lib.js")).toContain(
+    expect(await readText(cache, "/t/browser/app@1.0.0/~deps/lib/index.js")).toContain(
       "lib@2.1.0/index.js",
     );
   });

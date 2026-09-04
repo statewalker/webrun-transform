@@ -22,11 +22,11 @@ describe("~deps proxy layer", () => {
     const res = await server.fetch(new Request("http://h/~/app.ts"));
     const code = await res.text();
     // The module imports only relative / ./~deps/* — no bare "react".
-    expect(code).toContain("./~deps/app.ts/deps.react.js");
+    expect(code).toContain("./~deps/react/index.js");
     expect(code).not.toContain('from "react"');
 
     // The proxy reads the shared registry (identity path).
-    const proxy = await server.fetch(new Request("http://h/~/~deps/app.ts/deps.react.js"));
+    const proxy = await server.fetch(new Request("http://h/~/~deps/react/index.js"));
     const proxyCode = await proxy.text();
     expect(proxyCode).toContain('globalThis.__webrunHostRegistry.get("react")');
     expect(proxyCode).toContain("export const useState = __m.useState");
@@ -37,10 +37,8 @@ describe("~deps proxy layer", () => {
     await ready;
     const server = newModuleServer({ cache: new MemFilesApi(), project: p, target: "browser" });
     const code = await (await server.fetch(new Request("http://h/~/app.ts"))).text();
-    expect(code).toContain("./~deps/app.ts/deps.globals.js");
-    const g = await (
-      await server.fetch(new Request("http://h/~/~deps/app.ts/deps.globals.js"))
-    ).text();
+    expect(code).toContain("./~deps/~globals.js");
+    const g = await (await server.fetch(new Request("http://h/~/~deps/~globals.js"))).text();
     expect(g).toContain("export { __g0 as process }"); // alias form (no TDZ)
   });
 
@@ -49,9 +47,7 @@ describe("~deps proxy layer", () => {
     await ready;
     const server = newModuleServer({ cache: new MemFilesApi(), project: p, target: "browser" });
     await server.fetch(new Request("http://h/~/app.ts")); // generate the globals proxy
-    const g = await (
-      await server.fetch(new Request("http://h/~/~deps/app.ts/deps.globals.js"))
-    ).text();
+    const g = await (await server.fetch(new Request("http://h/~/~deps/~globals.js"))).text();
     // The self-referential `export const globalThis = globalThis` form is the bug.
     expect(g).not.toContain("export const globalThis");
     expect(g).not.toContain("export const global ");
@@ -87,10 +83,8 @@ describe("~deps proxy layer", () => {
       sources: [source as never],
     });
     const code = await (await server.fetch(new Request("http://h/~/app.ts"))).text();
-    expect(code).toContain("./~deps/app.ts/deps.dep.js");
-    const proxy = await (
-      await server.fetch(new Request("http://h/~/~deps/app.ts/deps.dep.js"))
-    ).text();
+    expect(code).toContain("./~deps/dep/index.js");
+    const proxy = await (await server.fetch(new Request("http://h/~/~deps/dep/index.js"))).text();
     expect(proxy).toContain("export { hi } from");
     expect(proxy).toContain("dep@1.0.0/index.js"); // re-exports the pinned local endpoint
   });
@@ -108,10 +102,8 @@ describe("~deps proxy layer", () => {
     registry.set("react", { useState: () => 0 }); // late registration
 
     const code = await (await server.fetch(new Request("http://h/~/app.ts"))).text();
-    expect(code).toContain("./~deps/app.ts/deps.react.js");
-    const proxy = await (
-      await server.fetch(new Request("http://h/~/~deps/app.ts/deps.react.js"))
-    ).text();
+    expect(code).toContain("./~deps/react/index.js");
+    const proxy = await (await server.fetch(new Request("http://h/~/~deps/react/index.js"))).text();
     expect(proxy).toContain('globalThis.__webrunHostRegistry.get("react")'); // host, not local
   });
 
@@ -123,10 +115,10 @@ describe("~deps proxy layer", () => {
     await ready;
     const server = newModuleServer({ cache: new MemFilesApi(), project: p });
     const code = await (await server.fetch(new Request("http://h/~/app.ts"))).text();
-    expect(code).not.toContain("./~deps/app.ts/deps.globals.js"); // no globals proxy prepended
+    expect(code).not.toContain("./~deps/~globals.js"); // no globals proxy prepended
     expect(code).not.toContain("export const toString"); // never a broken globals export
     // and the (never-generated) globals proxy is a 404, not a syntax-error module
-    const g = await server.fetch(new Request("http://h/~/~deps/app.ts/deps.globals.js"));
+    const g = await server.fetch(new Request("http://h/~/~deps/~globals.js"));
     expect(g.status).toBe(404);
   });
 
@@ -144,7 +136,7 @@ describe("~deps proxy layer", () => {
     });
     await rootServer.fetch(new Request("http://h/~/app.ts")); // generate the proxy
     const rootProxy = await (
-      await rootServer.fetch(new Request("http://h/~/~deps/app.ts/deps.react__jsx-runtime.js"))
+      await rootServer.fetch(new Request("http://h/~/~deps/react/jsx-runtime.js"))
     ).text();
     expect(rootProxy).toContain('globalThis.__webrunHostRegistry.get("react")');
     expect(rootProxy).not.toContain('.get("react/jsx-runtime")');
@@ -161,7 +153,7 @@ describe("~deps proxy layer", () => {
     });
     await subServer.fetch(new Request("http://h/~/app.ts")); // generate the proxy
     const subProxy = await (
-      await subServer.fetch(new Request("http://h/~/~deps/app.ts/deps.react__jsx-runtime.js"))
+      await subServer.fetch(new Request("http://h/~/~deps/react/jsx-runtime.js"))
     ).text();
     expect(subProxy).toContain('globalThis.__webrunHostRegistry.get("react/jsx-runtime")');
   });
@@ -179,21 +171,18 @@ describe("~deps proxy layer", () => {
     const server = newModuleServer({ cache: new MemFilesApi(), project: p, provided: registry });
     await server.prime({ url: "/a.ts" });
     await server.prime({ url: "/b.ts" });
-    // Both proxies read the one registry entry → identity holds at runtime.
-    const pa = await (
-      await server.fetch(new Request("http://h/~/~deps/a.ts/deps.react.js"))
-    ).text();
-    const pb = await (
-      await server.fetch(new Request("http://h/~/~deps/b.ts/deps.react.js"))
-    ).text();
-    expect(pa).toContain('globalThis.__webrunHostRegistry.get("react")');
-    expect(pb).toContain('globalThis.__webrunHostRegistry.get("react")');
+    // Both importers share ONE proxy at the project root; its body is the union of
+    // their shapes, and it reads the one registry entry → identity holds at runtime.
+    const proxy = await (await server.fetch(new Request("http://h/~/~deps/react/index.js"))).text();
+    expect(proxy).toContain('globalThis.__webrunHostRegistry.get("react")');
+    expect(proxy).toContain("export default __m"); // from a.ts: `import React from "react"`
+    expect(proxy).toContain("export const useState = __m.useState"); // from b.ts: `{ useState }`
     // No npm react was fetched (identity, not a copy):
     const files = await server.listResources({ url: "/a.ts" });
     expect(files.some((u) => u.includes("react@"))).toBe(false);
   });
 
-  it("class-as-adapter-key: a provided class is the same reference for two importers", async () => {
+  it("class-as-adapter-key: two importers share one root proxy, so the class is one reference", async () => {
     class K {}
     const registry = newHostRegistry({ "@app/keys": { K } });
     const p = new MemFilesApi();
@@ -206,16 +195,11 @@ describe("~deps proxy layer", () => {
     const server = newModuleServer({ cache: new MemFilesApi(), project: p, provided: registry });
     await server.fetch(new Request("http://h/~/a.ts")); // generates a.ts's proxy
     await server.fetch(new Request("http://h/~/b.ts")); // generates b.ts's proxy
-    const pa = await (
-      await server.fetch(new Request("http://h/~/~deps/a.ts/deps.@app__keys.js"))
+    const proxy = await (
+      await server.fetch(new Request("http://h/~/~deps/@app/keys/index.js"))
     ).text();
-    const pb = await (
-      await server.fetch(new Request("http://h/~/~deps/b.ts/deps.@app__keys.js"))
-    ).text();
-    expect(pa).toContain('globalThis.__webrunHostRegistry.get("@app/keys")');
-    expect(pa).toContain("export const K = __m.K");
-    expect(pb).toContain('globalThis.__webrunHostRegistry.get("@app/keys")');
-    expect(pb).toContain("export const K = __m.K");
+    expect(proxy).toContain('globalThis.__webrunHostRegistry.get("@app/keys")');
+    expect(proxy).toContain("export const K = __m.K");
   });
 
   it("namespace import of an ordinary npm dep works via export *", async () => {
@@ -245,9 +229,7 @@ describe("~deps proxy layer", () => {
       sources: [source as never],
     });
     await server.fetch(new Request("http://h/~/app.ts")); // generates the proxy
-    const proxy = await (
-      await server.fetch(new Request("http://h/~/~deps/app.ts/deps.ns.js"))
-    ).text();
+    const proxy = await (await server.fetch(new Request("http://h/~/~deps/ns/index.js"))).text();
     expect(proxy).toContain("export * from");
   });
 
@@ -291,11 +273,9 @@ describe("~deps proxy layer", () => {
     const codeB = await (await sB.fetch(new Request("http://h/~/app.ts"))).text();
     // The module is env-agnostic: it imports the SAME relative proxy path
     // regardless of resolver — only the proxy body differs.
-    expect(codeA).toContain("./~deps/app.ts/deps.dep.js");
-    expect(codeB).toContain("./~deps/app.ts/deps.dep.js");
-    const proxyB = await (
-      await sB.fetch(new Request("http://h/~/~deps/app.ts/deps.dep.js"))
-    ).text();
+    expect(codeA).toContain("./~deps/dep/index.js");
+    expect(codeB).toContain("./~deps/dep/index.js");
+    const proxyB = await (await sB.fetch(new Request("http://h/~/~deps/dep/index.js"))).text();
     expect(proxyB).toContain("https://esm.sh/dep");
   });
 
@@ -334,5 +314,22 @@ describe("~deps proxy layer", () => {
     for (const spec of specifiers) {
       expect(spec.startsWith(".")).toBe(true); // relative — no bare specifier, no absolute/CDN URL
     }
+  });
+
+  it("marks proxy responses no-cache so a later importer's widened body is seen", async () => {
+    const { p, ready } = projectWith(`import React from "react"; export const A = React;`);
+    await ready;
+    const server = newModuleServer({
+      cache: new MemFilesApi(),
+      project: p,
+      provided: newHostRegistry({ react: { marker: "ME" } }),
+    });
+    await server.prime({ url: "/app.ts" });
+    const proxy = await server.fetch(new Request("http://h/~/~deps/react/index.js"));
+    expect(proxy.status).toBe(200);
+    expect(proxy.headers.get("cache-control")).toBe("no-cache");
+    // A normal module keeps its existing (absent) cache header.
+    const mod = await server.fetch(new Request("http://h/~/app.ts"));
+    expect(mod.headers.get("cache-control")).toBe(null);
   });
 });

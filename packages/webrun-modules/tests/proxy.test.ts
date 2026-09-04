@@ -1,13 +1,58 @@
 import { describe, expect, it } from "vitest";
-import { proxyBody, proxyId } from "../src/deps/proxy.js";
+import { depsEntryPath, depsRoot, proxyBody, proxyId } from "../src/deps/proxy.js";
+
+describe("depsRoot", () => {
+  it("is the project root for authored sources and the package root for npm files", () => {
+    expect(depsRoot("~/app.ts")).toBe("~");
+    expect(depsRoot("~/pages/deep/x.tsx")).toBe("~");
+    expect(depsRoot("react-dom@19.0.0/cjs/impl.js")).toBe("react-dom@19.0.0");
+    expect(depsRoot("@scope/pkg@1.2.3/lib/a.js")).toBe("@scope/pkg@1.2.3");
+  });
+});
+
+describe("depsEntryPath", () => {
+  it("maps a specifier to its path, from the specifier alone", () => {
+    expect(depsEntryPath("react")).toBe("react/index.js");
+    expect(depsEntryPath("react/jsx-runtime")).toBe("react/jsx-runtime.js");
+    expect(depsEntryPath("@scope/pkg")).toBe("@scope/pkg/index.js");
+    expect(depsEntryPath("@scope/pkg/sub")).toBe("@scope/pkg/sub.js");
+    expect(depsEntryPath("lodash/fp")).toBe("lodash/fp.js");
+  });
+
+  it("normalizes JS-family extensions to .js so both drivers agree on one URL", () => {
+    expect(depsEntryPath("foo/bar.mjs")).toBe("foo/bar.js");
+    expect(depsEntryPath("foo/bar.js")).toBe("foo/bar.js");
+    expect(depsEntryPath("foo/bar.tsx")).toBe("foo/bar.js");
+  });
+
+  it("gives the reserved free-globals key its own file", () => {
+    expect(depsEntryPath("")).toBe("~globals.js");
+  });
+
+  it("merges the specifiers that name one entry (documented collision)", () => {
+    // `foo` and `foo/index` deliberately land on one path: in practice they resolve
+    // to the same endpoint, and `ensureProxy` throws if they ever do not.
+    expect(depsEntryPath("foo/index")).toBe(depsEntryPath("foo"));
+    expect(depsEntryPath("foo/bar.mjs")).toBe(depsEntryPath("foo/bar"));
+  });
+});
 
 describe("proxyId", () => {
-  it("co-locates under ~deps/<basename>/ and slugs the specifier", () => {
-    expect(proxyId("pkg@1/dir/foo.js", "react")).toBe("pkg@1/dir/~deps/foo.js/deps.react.js");
-    expect(proxyId("pkg@1/foo.js", "react/jsx-runtime")).toBe(
-      "pkg@1/~deps/foo.js/deps.react__jsx-runtime.js",
+  it("places the proxy in the importer's MODULE-ROOT deps folder", () => {
+    expect(proxyId("pkg@1.0.0/dir/foo.js", "react")).toBe("pkg@1.0.0/~deps/react/index.js");
+    expect(proxyId("pkg@1.0.0/foo.js", "react/jsx-runtime")).toBe(
+      "pkg@1.0.0/~deps/react/jsx-runtime.js",
     );
-    expect(proxyId("~/app.ts", "")).toBe("~/~deps/app.ts/deps.globals.js");
+    expect(proxyId("~/pages/deep/x.tsx", "react")).toBe("~/~deps/react/index.js");
+    expect(proxyId("~/app.ts", "")).toBe("~/~deps/~globals.js");
+  });
+
+  it("every file of one package shares one proxy", () => {
+    expect(proxyId("pkg@1.0.0/a.js", "react")).toBe(proxyId("pkg@1.0.0/deep/b.js", "react"));
+  });
+
+  it("honours a custom deps folder name", () => {
+    expect(proxyId("~/app.ts", "react", "vendor")).toBe("~/vendor/react/index.js");
   });
 });
 

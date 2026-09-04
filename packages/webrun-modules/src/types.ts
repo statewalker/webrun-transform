@@ -149,6 +149,10 @@ export interface ModuleServerOptions {
    *  deps under e.g. `"deps/"` while authored project files stay at `~/`.
    *  Defaults to `""` — packages served alongside project files. */
   depsPath?: string;
+  /** Name of the per-module-root folder holding dependency proxies. Every file of
+   *  a module resolves its external imports through this one folder, so replacing a
+   *  file in it substitutes that dependency for the whole module. Defaults to `"~deps"`. */
+  depsFolder?: string;
   /** Names bound to live host instances (react, platform classes). Record is
    *  copied into the shared registry; a HostRegistry is held live. */
   provided?: HostRegistry | Record<string, unknown>;

@@ -1,5 +1,5 @@
 import type { FilesApi } from "@statewalker/webrun-files";
-import { readText, writeText } from "@statewalker/webrun-files";
+import { readText, tryReadText, writeText } from "@statewalker/webrun-files";
 import semver from "semver";
 import { newDefaultEndpointResolver } from "../deps/endpoint-resolver.js";
 import { HOST_REGISTRY_KEY } from "../deps/host-registry.js";
@@ -140,9 +140,9 @@ export async function ensurePackage(
 }
 
 /** Resolve an import specifier (from `fromId`) to what to emit + its cache id. A
- *  bare external specifier is rewritten to a co-located `~deps` proxy; the proxy's
- *  real endpoint (for a `local` binding) is returned as `endpointId` so the graph
- *  walker caches it. */
+ *  bare external specifier is rewritten to a proxy in the importer's module-root
+ *  deps folder; the proxy's real endpoint (for a `local` binding) is returned as
+ *  `endpointId` so the graph walker caches it. */
 export async function resolveSpec(
   spec: string,
   fromId: string,
@@ -170,8 +170,9 @@ export async function resolveSpec(
     const { id } = await resolveCssSpec(spec, fromId, ctx);
     if (id && isCssFile(id)) return { url: ctx.policy.servedUrl(id, fromId), id };
   }
-  // Bare external specifier → generate a co-located proxy; import the proxy.
-  const pid = proxyId(fromId, spec);
+  // Bare external specifier → generate a proxy in the module root's deps folder;
+  // import the proxy.
+  const pid = proxyId(fromId, spec, ctx.depsFolder);
   let binding: EndpointBinding;
   let endpointId: string | undefined;
   if (provided) {
@@ -187,43 +188,225 @@ export async function resolveSpec(
   return { url: ctx.policy.servedUrl(pid, fromId), id: pid, endpointId };
 }
 
-/** Generate + cache a proxy module (idempotent). A `local` endpoint's URL is
- *  shaped through the URL policy (`servedUrl(endpointId, pid)`) so it carries the
- *  driver's extension decision (keep-ext keeps the source ext; ext-map rewrites to
- *  `.js`) and is already relativized — `proxyBody` splices it in verbatim. */
+/** Structural identity of a binding: its kind plus the field that identifies it. */
+function bindingKey(b: EndpointBinding): string {
+  if (b.kind === "host") return `host:${b.name}`;
+  if (b.kind === "inline") return `inline:${b.code}`;
+  return `${b.kind}:${b.url}`;
+}
+
+/** Where a proxy's accumulated import shape is persisted, beside its emitted
+ *  artifact — same `.<kind>` sidecar convention the build already uses for the
+ *  per-id `.hash` gate. The sidecar is written BEFORE the body it describes (see
+ *  the write callbacks), so a torn write can only ever leave it LEADING the
+ *  artifact, which the mandatory first-touch re-emit repairs. */
+function shapePath(pid: string, ctx: PreprocessContext): string {
+  return `${ctx.policy.emittedPath(pid)}.shape.json`;
+}
+
+/**
+ * Seed `ctx.proxies` for `pid` from its durable sidecar, ONCE per run, before the
+ * caller merges its own shape in.
+ *
+ * `ctx.proxies` is per-run in-memory state but the emitted proxy is durable, and a
+ * shared proxy's export surface is the union of ALL its importers'. An incremental
+ * driver walks only the CHANGED importers, so a fresh run would otherwise start
+ * from an empty accumulator and rewrite the proxy with just those importers'
+ * names — silently deleting exports that unchanged, already-emitted modules still
+ * import. Seeding from the sidecar makes the accumulator monotone across runs.
+ *
+ * The seed goes through `mergeProxyShape`, so it UNIONS with whatever a concurrent
+ * caller already merged instead of overwriting it, and concurrent callers for one
+ * pid share a single read via `singleFlight`. Only the import shape is persisted,
+ * never the binding: a binding legitimately changes between runs (a version bump
+ * moves a `local` endpoint url) and a stale persisted one would raise a spurious
+ * `conflicting bindings` error. The seeded shape is unioned under the CURRENT
+ * caller's binding, and the run's first touch of a pid always re-emits (see
+ * `ensureProxy`), so a changed binding still reaches the emitted body.
+ */
+async function seedProxyShape(
+  pid: string,
+  binding: EndpointBinding,
+  ctx: PreprocessContext,
+): Promise<void> {
+  if (ctx.proxies.has(pid)) return; // already touched in this run — nothing to seed
+  await singleFlight(ctx, `proxyseed:${pid}`, async () => {
+    const raw = await tryReadText(ctx.cache, shapePath(pid, ctx));
+    if (!raw) return;
+    let imp: ModuleImport | undefined;
+    try {
+      const parsed = JSON.parse(raw) as Partial<ModuleImport>;
+      if (Array.isArray(parsed?.names)) {
+        imp = {
+          names: parsed.names.filter((n): n is string => typeof n === "string"),
+          hasDefault: !!parsed.hasDefault,
+          hasNamespace: !!parsed.hasNamespace,
+        };
+      }
+    } catch {
+      imp = undefined; // a corrupt sidecar degrades to the pre-seed behaviour
+    }
+    if (!imp) return;
+    // `grew` is discarded: the run's first touch of this pid re-emits unconditionally
+    // anyway, so nothing here needs to request a write.
+    mergeProxyShape(pid, binding, imp, ctx);
+  });
+}
+
+/**
+ * Merge one importer's import shape into a proxy's accumulated shape; returns
+ * `true` when the shape grew and the body must be re-emitted.
+ *
+ * SYNCHRONOUS BY DESIGN, and it MUST run outside `singleFlight`. The flight
+ * coalesces concurrent calls for one pid; those calls now carry DIFFERENT `imp`s,
+ * so coalescing before the merge would silently drop an importer's names and
+ * produce a proxy missing exports nobody notices until runtime.
+ *
+ * `seedProxyShape` is the one call that DOES merge inside a flight. Its `imp` is
+ * read from the pid's sidecar, so no importer's names can be dropped there — but
+ * its `binding` IS caller-specific, and on the `!prev` path the winning caller's
+ * binding is what establishes the entry. That is nonetheless safe, and not because
+ * the payload is identical: it is safe because every caller re-merges its OWN
+ * binding through this function immediately after the flight resolves, so a
+ * genuine conflict still reaches the `conflicting bindings` guard and throws.
+ */
+function mergeProxyShape(
+  pid: string,
+  binding: EndpointBinding,
+  imp: ModuleImport,
+  ctx: PreprocessContext,
+): boolean {
+  const prev = ctx.proxies.get(pid);
+  if (!prev) {
+    ctx.proxies.set(pid, {
+      binding,
+      imp: {
+        names: [...new Set(imp.names)],
+        hasDefault: imp.hasDefault,
+        hasNamespace: imp.hasNamespace,
+      },
+    });
+    return true;
+  }
+  if (bindingKey(prev.binding) !== bindingKey(binding)) {
+    throw new ModuleResolveError(
+      { url: pid },
+      `conflicting bindings for one proxy path: ${bindingKey(prev.binding)} vs ${bindingKey(binding)}`,
+    );
+  }
+  const names = new Set(prev.imp.names);
+  const before = names.size;
+  for (const n of imp.names) names.add(n);
+  let grew = names.size !== before;
+  prev.imp.names = [...names];
+  if (imp.hasDefault && !prev.imp.hasDefault) {
+    prev.imp.hasDefault = true;
+    grew = true;
+  }
+  if (imp.hasNamespace && !prev.imp.hasNamespace) {
+    prev.imp.hasNamespace = true;
+    grew = true;
+  }
+  return grew;
+}
+
+/** Serialize writes per proxy id. Each link builds its body from the LIVE
+ *  accumulated shape when it RUNS, not when it is queued, so a stale body can
+ *  never land after a fuller one — the last write always carries the union.
+ *  Two `ensureProxy` calls for one pid now carry DIFFERENT `imp`s and settle at
+ *  different times; without this chain their writes race unordered onto the
+ *  SAME cache key, and a slow write for a thinner shape can silently overwrite
+ *  a fuller one that already landed — permanently, since `ctx.proxies` already
+ *  holds the union and a later call sees `grew === false` and skips the write. */
+function queueProxyWrite(
+  ctx: PreprocessContext,
+  pid: string,
+  write: () => Promise<void>,
+): Promise<void> {
+  const key = `proxywrite:${pid}`;
+  const prev = (ctx.inflight.get(key) as Promise<unknown> | undefined) ?? Promise.resolve();
+  const next = prev.then(write, write); // a failed link must not stall the chain
+  ctx.inflight.set(key, next);
+  return next.finally(() => {
+    if (ctx.inflight.get(key) === next) ctx.inflight.delete(key);
+  });
+}
+
+/** Generate + cache a proxy module. One proxy serves every importer in its module
+ *  root, so the body is built from the ACCUMULATED shape (see `mergeProxyShape`)
+ *  and re-emitted whenever that shape grows. A `local` endpoint's URL is shaped
+ *  through the URL policy (`servedUrl(endpointId, pid)`) so it carries the driver's
+ *  extension decision and is already relativized — `proxyBody` splices it in
+ *  verbatim. */
 export async function ensureProxy(
   pid: string,
   binding: EndpointBinding,
   imp: ModuleImport,
   ctx: PreprocessContext,
 ): Promise<void> {
-  return singleFlight(ctx, `proxy:${pid}`, async () => {
-    const key = ctx.policy.emittedPath(pid);
-    if (await ctx.cache.exists(key)) return;
+  // FIRST touch of this pid in this run — checked BEFORE the seed populates the map.
+  const firstTouch = !ctx.proxies.has(pid);
+  await seedProxyShape(pid, binding, ctx); // durable union across runs; awaited BEFORE the merge
+  const grew = mergeProxyShape(pid, binding, imp, ctx);
+  const key = ctx.policy.emittedPath(pid);
+  // The run's first touch ALWAYS re-emits, even when the seeded shape did not grow.
+  // The body is a function of the shape AND the binding (plus everything else
+  // `proxyBody` renders), and only the shape is persisted: without this a changed
+  // binding — a version bump moving a `local` endpoint url, a `host` ↔ `local` flip,
+  // a registry change — would leave the old body in place forever, and a later
+  // growth would then pair the NEW url with a name set that predates it. It also
+  // makes a torn body/sidecar state self-healing: the body is rebuilt from the
+  // seeded union rather than trusted. Subsequent touches keep the growth-only rule.
+  if (!firstTouch && !grew && (await ctx.cache.exists(key))) return;
+  return queueProxyWrite(ctx, pid, async () => {
+    const merged = ctx.proxies.get(pid) as { binding: EndpointBinding; imp: ModuleImport };
     const wire: EndpointBinding =
-      binding.kind === "local"
-        ? { kind: "local", url: ctx.policy.servedUrl(binding.url, pid) }
-        : binding;
-    const body = proxyBody({ binding: wire, imp, registryKey: HOST_REGISTRY_KEY });
+      merged.binding.kind === "local"
+        ? { kind: "local", url: ctx.policy.servedUrl(merged.binding.url, pid) }
+        : merged.binding;
+    const body = proxyBody({ binding: wire, imp: merged.imp, registryKey: HOST_REGISTRY_KEY });
+    const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
+    // Sidecar BEFORE the body, from the SAME snapshot. A torn write must leave the
+    // sidecar LEADING the artifact, never lagging it: a leading sidecar is repaired
+    // by the next run's mandatory first-touch re-emit, whereas a lagging one would
+    // seed a union narrower than what the artifact already exports and re-narrow it.
+    await writeText(ctx.cache, shapePath(pid, ctx), shape);
     await writeText(ctx.cache, key, body);
   });
 }
 
-/** Generate + cache the co-located globals proxy exporting the used allowlisted
- *  free globals (idempotent). */
+/** Generate + cache the module-root globals proxy exporting the used allowlisted
+ *  free globals. Accumulates its name set across every importer in the root, by
+ *  the same growth-only rule as `ensureProxy`; `""` is the codebase's reserved
+ *  free-globals pseudo-module key (see `ModuleDescriptor.imports`). */
 export async function ensureGlobalsProxy(
   gid: string,
   names: string[],
   ctx: PreprocessContext,
 ): Promise<void> {
-  return singleFlight(ctx, `globals:${gid}`, async () => {
-    const key = ctx.policy.emittedPath(gid);
-    if (await ctx.cache.exists(key)) return;
+  const globalsBinding: EndpointBinding = { kind: "host", name: "" };
+  const firstTouch = !ctx.proxies.has(gid); // checked BEFORE the seed populates the map
+  await seedProxyShape(gid, globalsBinding, ctx); // durable union across runs
+  const grew = mergeProxyShape(
+    gid,
+    globalsBinding,
+    { names, hasDefault: false, hasNamespace: false },
+    ctx,
+  );
+  const key = ctx.policy.emittedPath(gid);
+  // First touch always re-emits — same rule, same reasons, as `ensureProxy`: the
+  // body splices in `ctx.globals[n]` expressions that are NOT part of the persisted
+  // shape and can change between runs (a different target, a user override).
+  if (!firstTouch && !grew && (await ctx.cache.exists(key))) return;
+  return queueProxyWrite(ctx, gid, async () => {
+    const merged = ctx.proxies.get(gid) as { binding: EndpointBinding; imp: ModuleImport };
     // Alias form (`const __gI = <expr>; export { __gI as name }`) avoids a TDZ
     // ReferenceError for a global whose expression is the bare `globalThis` token.
-    const body = names
+    const body = merged.imp.names
       .map((n, i) => `const __g${i} = ${ctx.globals[n]};\nexport { __g${i} as ${n} };`)
       .join("\n");
+    const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
+    await writeText(ctx.cache, shapePath(gid, ctx), shape); // leads the body — see `ensureProxy`
     await writeText(ctx.cache, key, body);
   });
 }

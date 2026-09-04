@@ -3,6 +3,7 @@ import { globalHostRegistry, HOST_REGISTRY_KEY } from "../deps/host-registry.js"
 import {
   defaultGlobals,
   makeKeepExtPolicy,
+  normalizeDepsFolder,
   type PreprocessContext,
   type UrlPolicy,
   urlPath,
@@ -62,6 +63,7 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
   // deps can be isolated under e.g. `/deps/` while authored project files stay at
   // `~/`. Default "" ⇒ packages served alongside project files (unchanged).
   const depsPrefix = normalizeDeps(options.depsPath ?? "");
+  const depsFolder = normalizeDepsFolder(options.depsFolder ?? "~deps");
   const lock: Lockfile = { ...(options.lock ?? {}) };
   const tRoot = `/t/${target}`;
 
@@ -89,6 +91,7 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
     target,
     basePath,
     depsPath: depsPrefix,
+    depsFolder,
     tRoot,
     lock,
     sources,
@@ -97,6 +100,7 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
     registry,
     globals: { ...defaultGlobals(target), ...(options.globals ?? {}) },
     inflight: new Map(),
+    proxies: new Map(),
     transforms: newDefaultTransformRegistry(),
     policy: undefined as unknown as UrlPolicy,
     resolveEndpoint: undefined as unknown as EndpointResolver,
@@ -236,9 +240,15 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
         // `/t/{target}`; a missing one has no `/raw/` to transform → 404 (never
         // routed through transformAndCache).
         const cached = await cache.exists(`${tRoot}/${id}`);
-        if (!cached && id.includes("/~deps/")) return new Response(null, { status: 404 });
+        const isProxy = id.includes(`/${ctx.depsFolder}/`);
+        if (!cached && isProxy) return new Response(null, { status: 404 });
         const body = cached ? await readText(cache, `${tRoot}/${id}`) : await transformAndCache(id);
-        return new Response(body, { status: 200, headers: { "content-type": "text/javascript" } });
+        // A proxy's body GROWS as more files of its module are transformed (its
+        // export surface is the union of its importers'). On the lazy fetch path a
+        // browser could otherwise heuristically cache a partial one.
+        const headers: Record<string, string> = { "content-type": "text/javascript" };
+        if (isProxy) headers["cache-control"] = "no-cache";
+        return new Response(body, { status: 200, headers });
       } catch {
         return new Response(null, { status: 404 });
       }

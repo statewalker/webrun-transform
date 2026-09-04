@@ -2,9 +2,11 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import { relativeUrl } from "../server/specifiers.js";
 import type {
   CssTransform,
+  EndpointBinding,
   EndpointResolver,
   HostRegistry,
   Lockfile,
+  ModuleImport,
   ModuleTarget,
   Source,
   Transform,
@@ -90,6 +92,8 @@ export interface PreprocessContext {
   basePath: string;
   /** Normalized deps prefix (relative to `basePath`); `""` when unset. */
   depsPath: string;
+  /** Name of the per-module-root folder holding dependency proxies. Default `"~deps"`. */
+  depsFolder: string;
   tRoot: string;
   lock: Lockfile;
   sources: Source[];
@@ -103,6 +107,18 @@ export interface PreprocessContext {
   resolveEndpoint: EndpointResolver;
   /** In-flight dedupe so parallel drivers can't double-load or tear a proxy. */
   inflight: Map<string, Promise<unknown>>;
+  /**
+   * Accumulated import shape + binding per proxy id. One proxy serves every
+   * importer in its module root, so its export surface is the UNION of those
+   * importers' shapes rather than any single one. Growth-only, so a proxy never
+   * loses an export an earlier importer already relies on: within a run through
+   * this map, and ACROSS runs because each proxy's shape is persisted to a
+   * `<emitted>.shape.json` sidecar and seeded back on the first touch of that
+   * proxy id (an incremental driver walks only the changed importers, so the map
+   * alone would start empty and narrow the shared proxy). The free-globals proxy
+   * is stored here too, under the reserved `""` host binding.
+   */
+  proxies: Map<string, { binding: EndpointBinding; imp: ModuleImport }>;
   policy: UrlPolicy;
   /** Input-type → transform registry consulted by `preprocessModule`. Drivers
    *  attach the default (`newDefaultTransformRegistry()`); an unregistered
@@ -124,6 +140,21 @@ export interface PreprocessContext {
  *  cross-prefix imports resolve correctly. Core-owned (shared across policies). */
 export function urlPath(id: string, ctx: PreprocessContext): string {
   return id.startsWith("~/") ? id : ctx.depsPath + id;
+}
+
+/** Validate a deps folder name: exactly one non-empty path segment, never a
+ *  traversal, and safe as a single URL path segment. It is spliced verbatim
+ *  into ids that become URL path segments the server parses out of
+ *  `pathname` — a `/` or `..` would silently relocate every proxy, and a
+ *  `?`/`#`/`%` or other reserved/whitespace character would corrupt the URL
+ *  at request time. */
+export function normalizeDepsFolder(name: string): string {
+  if (!name || name === "." || name === ".." || !/^[\w.~-]+$/.test(name)) {
+    throw new Error(
+      `depsFolder must be a single non-empty path segment made of letters, digits, "_", ".", "~", "-" (and not "." or ".."), got ${JSON.stringify(name)}`,
+    );
+  }
+  return name;
 }
 
 /** Target-derived injectable free-global allowlist → module expressions. */

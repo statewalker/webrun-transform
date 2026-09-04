@@ -221,12 +221,12 @@ describe("CSS serving", () => {
     });
     const server = newModuleServer({ cache: new MemFilesApi(), project: p, provided: registry });
     const app = await (await server.fetch(new Request("http://h/~/app.js"))).text();
-    expect(app).toContain("./~deps/app.js/deps.acme.css.js"); // proxied to the host, not the CSS path
+    expect(app).toContain("./~deps/acme.css/index.js"); // proxied to the host, not the CSS path
     expect(app).not.toContain("?module");
 
     // The proxy actually resolves (200, not a 404 from a misrouted CSS lookup)
     // and reads the shared host registry — confirms the bug's 404 is fixed.
-    const proxy = await server.fetch(new Request("http://h/~/~deps/app.js/deps.acme.css.js"));
+    const proxy = await server.fetch(new Request("http://h/~/~deps/acme.css/index.js"));
     expect(proxy.status).toBe(200);
     const proxyCode = await proxy.text();
     expect(proxyCode).toContain('globalThis.__webrunHostRegistry.get("acme.css")');

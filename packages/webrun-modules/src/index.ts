@@ -13,6 +13,7 @@ export {
   defaultGlobals,
   detectInputType,
   makeKeepExtPolicy,
+  normalizeDepsFolder,
   urlPath,
 } from "./preprocess/context.js";
 export { cssModuleWrapper, preprocessModule, serveJsonModule } from "./preprocess/module.js";

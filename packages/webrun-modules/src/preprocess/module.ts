@@ -69,12 +69,12 @@ export async function jsTransform(
     const { url } = await resolveSpec(spec, id, imports[spec], ctx);
     map.set(spec, url);
   }
-  // Globals: prepend an import from a co-located globals proxy for allowlisted
+  // Globals: prepend an import from the module root's globals proxy for allowlisted
   // free vars (declared/imported names never appear in the `""` free-global set).
   const usedGlobals = (imports[""]?.names ?? []).filter((n) => Object.hasOwn(ctx.globals, n));
   let prelude = "";
   if (usedGlobals.length) {
-    const gid = proxyId(id, "");
+    const gid = proxyId(id, "", ctx.depsFolder);
     await ensureGlobalsProxy(gid, usedGlobals, ctx);
     prelude = `import { ${usedGlobals.join(", ")} } from ${JSON.stringify(
       relativeUrl(urlPath(id, ctx), urlPath(gid, ctx)),
