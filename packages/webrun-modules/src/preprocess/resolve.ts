@@ -187,41 +187,111 @@ export async function resolveSpec(
   return { url: ctx.policy.servedUrl(pid, fromId), id: pid, endpointId };
 }
 
-/** Generate + cache a proxy module (idempotent). A `local` endpoint's URL is
- *  shaped through the URL policy (`servedUrl(endpointId, pid)`) so it carries the
- *  driver's extension decision (keep-ext keeps the source ext; ext-map rewrites to
- *  `.js`) and is already relativized — `proxyBody` splices it in verbatim. */
+/** Structural identity of a binding: its kind plus the field that identifies it. */
+function bindingKey(b: EndpointBinding): string {
+  if (b.kind === "host") return `host:${b.name}`;
+  if (b.kind === "inline") return `inline:${b.code}`;
+  return `${b.kind}:${b.url}`;
+}
+
+/**
+ * Merge one importer's import shape into a proxy's accumulated shape; returns
+ * `true` when the shape grew and the body must be re-emitted.
+ *
+ * SYNCHRONOUS BY DESIGN, and it MUST run outside `singleFlight`. The flight
+ * coalesces concurrent calls for one pid; those calls now carry DIFFERENT `imp`s,
+ * so coalescing before the merge would silently drop an importer's names and
+ * produce a proxy missing exports nobody notices until runtime.
+ */
+function mergeProxyShape(
+  pid: string,
+  binding: EndpointBinding,
+  imp: ModuleImport,
+  ctx: PreprocessContext,
+): boolean {
+  const prev = ctx.proxies.get(pid);
+  if (!prev) {
+    ctx.proxies.set(pid, {
+      binding,
+      imp: {
+        names: [...new Set(imp.names)],
+        hasDefault: imp.hasDefault,
+        hasNamespace: imp.hasNamespace,
+      },
+    });
+    return true;
+  }
+  if (bindingKey(prev.binding) !== bindingKey(binding)) {
+    throw new ModuleResolveError(
+      { url: pid },
+      `conflicting bindings for one proxy path: ${bindingKey(prev.binding)} vs ${bindingKey(binding)}`,
+    );
+  }
+  const names = new Set(prev.imp.names);
+  const before = names.size;
+  for (const n of imp.names) names.add(n);
+  let grew = names.size !== before;
+  prev.imp.names = [...names];
+  if (imp.hasDefault && !prev.imp.hasDefault) {
+    prev.imp.hasDefault = true;
+    grew = true;
+  }
+  if (imp.hasNamespace && !prev.imp.hasNamespace) {
+    prev.imp.hasNamespace = true;
+    grew = true;
+  }
+  return grew;
+}
+
+/** Generate + cache a proxy module. One proxy serves every importer in its module
+ *  root, so the body is built from the ACCUMULATED shape (see `mergeProxyShape`)
+ *  and re-emitted whenever that shape grows. A `local` endpoint's URL is shaped
+ *  through the URL policy (`servedUrl(endpointId, pid)`) so it carries the driver's
+ *  extension decision and is already relativized — `proxyBody` splices it in
+ *  verbatim. */
 export async function ensureProxy(
   pid: string,
   binding: EndpointBinding,
   imp: ModuleImport,
   ctx: PreprocessContext,
 ): Promise<void> {
-  return singleFlight(ctx, `proxy:${pid}`, async () => {
-    const key = ctx.policy.emittedPath(pid);
-    if (await ctx.cache.exists(key)) return;
+  const grew = mergeProxyShape(pid, binding, imp, ctx);
+  const merged = ctx.proxies.get(pid) as { binding: EndpointBinding; imp: ModuleImport };
+  const key = ctx.policy.emittedPath(pid);
+  if (!grew && (await ctx.cache.exists(key))) return;
+  const rev = `${merged.imp.names.length}:${merged.imp.hasDefault}:${merged.imp.hasNamespace}`;
+  return singleFlight(ctx, `proxy:${pid}:${rev}`, async () => {
     const wire: EndpointBinding =
       binding.kind === "local"
         ? { kind: "local", url: ctx.policy.servedUrl(binding.url, pid) }
         : binding;
-    const body = proxyBody({ binding: wire, imp, registryKey: HOST_REGISTRY_KEY });
+    const body = proxyBody({ binding: wire, imp: merged.imp, registryKey: HOST_REGISTRY_KEY });
     await writeText(ctx.cache, key, body);
   });
 }
 
-/** Generate + cache the co-located globals proxy exporting the used allowlisted
- *  free globals (idempotent). */
+/** Generate + cache the module-root globals proxy exporting the used allowlisted
+ *  free globals. Accumulates its name set across every importer in the root, by
+ *  the same growth-only rule as `ensureProxy`; `""` is the codebase's reserved
+ *  free-globals pseudo-module key (see `ModuleDescriptor.imports`). */
 export async function ensureGlobalsProxy(
   gid: string,
   names: string[],
   ctx: PreprocessContext,
 ): Promise<void> {
-  return singleFlight(ctx, `globals:${gid}`, async () => {
-    const key = ctx.policy.emittedPath(gid);
-    if (await ctx.cache.exists(key)) return;
+  const grew = mergeProxyShape(
+    gid,
+    { kind: "host", name: "" },
+    { names, hasDefault: false, hasNamespace: false },
+    ctx,
+  );
+  const merged = ctx.proxies.get(gid) as { binding: EndpointBinding; imp: ModuleImport };
+  const key = ctx.policy.emittedPath(gid);
+  if (!grew && (await ctx.cache.exists(key))) return;
+  return singleFlight(ctx, `globals:${gid}:${merged.imp.names.length}`, async () => {
     // Alias form (`const __gI = <expr>; export { __gI as name }`) avoids a TDZ
     // ReferenceError for a global whose expression is the bare `globalThis` token.
-    const body = names
+    const body = merged.imp.names
       .map((n, i) => `const __g${i} = ${ctx.globals[n]};\nexport { __g${i} as ${n} };`)
       .join("\n");
     await writeText(ctx.cache, key, body);

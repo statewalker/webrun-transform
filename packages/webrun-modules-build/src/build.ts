@@ -87,6 +87,7 @@ export function newProjectBuild(opts: ProjectBuildOptions): ProjectBuild {
     registry: newHostRegistry(),
     globals: defaultGlobals(target),
     inflight: new Map(),
+    proxies: new Map(),
     transforms: newDefaultTransformRegistry(),
     policy: undefined as unknown as UrlPolicy,
     resolveEndpoint: undefined as unknown as EndpointResolver,

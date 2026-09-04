@@ -97,6 +97,7 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
     registry,
     globals: { ...defaultGlobals(target), ...(options.globals ?? {}) },
     inflight: new Map(),
+    proxies: new Map(),
     transforms: newDefaultTransformRegistry(),
     policy: undefined as unknown as UrlPolicy,
     resolveEndpoint: undefined as unknown as EndpointResolver,

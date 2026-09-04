@@ -2,9 +2,11 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import { relativeUrl } from "../server/specifiers.js";
 import type {
   CssTransform,
+  EndpointBinding,
   EndpointResolver,
   HostRegistry,
   Lockfile,
+  ModuleImport,
   ModuleTarget,
   Source,
   Transform,
@@ -103,6 +105,14 @@ export interface PreprocessContext {
   resolveEndpoint: EndpointResolver;
   /** In-flight dedupe so parallel drivers can't double-load or tear a proxy. */
   inflight: Map<string, Promise<unknown>>;
+  /**
+   * Accumulated import shape + binding per proxy id. One proxy serves every
+   * importer in its module root, so its export surface is the UNION of those
+   * importers' shapes rather than any single one. Growth-only within a run, so a
+   * proxy never loses an export an earlier importer already relies on. The
+   * free-globals proxy is stored here too, under the reserved `""` host binding.
+   */
+  proxies: Map<string, { binding: EndpointBinding; imp: ModuleImport }>;
   policy: UrlPolicy;
   /** Input-type → transform registry consulted by `preprocessModule`. Drivers
    *  attach the default (`newDefaultTransformRegistry()`); an unregistered
