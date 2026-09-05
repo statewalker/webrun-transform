@@ -48,9 +48,14 @@ pnpm -r build
 pnpm -r test
 ```
 
-`turbo.json` is a nested config (`extends: ["//"]`) and `biome.json` sets `root: false`,
-so this repository composes into a StateWalker umbrella workspace. Both are required
-there; use `pnpm -r` for standalone runs.
+This repository composes into a StateWalker umbrella workspace, which lists
+`workspaces/<repo>/packages/*` as its members — the repository directory itself is
+not one. Turbo therefore never reads this `turbo.json` from the umbrella root: a
+task there resolves against the umbrella's own definitions. Run from anywhere
+*inside* this repository, turbo instead roots here (there is a `pnpm-lock.yaml` and
+a `pnpm-workspace.yaml`) and reads this file as a root config, so it must not carry
+`extends` — which turbo rejects in a root config. `biome.json` keeps `root: false`;
+that one works with or without an ancestor config.
 
 ## License
 
