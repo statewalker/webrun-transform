@@ -361,7 +361,13 @@ above), and CSS source maps (tracked for a later `map` field on
   (`application/json`, `text/markdown`, …);
 - append `?raw` to get the raw bytes of *any* file as `application/octet-stream`;
 - an unresolvable path returns a `404` `Response` (never throws) — including a
-  path that names a directory, or a file the package does not ship.
+  path that names a directory, or a file the package does not ship;
+- a file that IS there but cannot be processed — most often because one of its
+  imports fails to resolve — returns a `500` whose body is the reason
+  (`ModuleResolveError: Cannot resolve {"pkg":"astro:data-layer-content"}: registry
+  404 …`). "Not found" and "found, but broken" are different answers, and a
+  browser reports the second only as `Failed to fetch dynamically imported
+  module`, so the body is the one place the cause is visible.
 
 Mount it under any `basePath` (returned URLs carry the prefix; the cached bytes
 stay portable, because internal imports are rewritten as **relative** URLs):
@@ -396,9 +402,12 @@ made — a failure that looks like the server's fault but never reaches it.
 ## Errors
 
 - `ModuleResolveError { ref, reason }` — a package / version / subpath can't be
-  resolved (surfaced as a `404` from `fetch`).
+  resolved. From `fetch` this is a `404` when the REQUESTED path is what could not
+  be resolved, and a `500` carrying the reason when the requested file exists and
+  one of its imports could not be — including a specifier no registry can serve,
+  such as a bundler's virtual module (`astro:data-layer-content`).
 - `ModuleTransformError { path, reason }` — a file can't be transformed to runnable
-  ESM.
+  ESM (a `500` carrying the reason).
 
 ## Utilities
 

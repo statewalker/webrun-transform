@@ -261,8 +261,21 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
       const headers: Record<string, string> = { "content-type": "text/javascript" };
       if (isProxy) headers["cache-control"] = "no-cache";
       return new Response(body, { status: 200, headers });
-    } catch {
-      return new Response(null, { status: 404 });
+    } catch (err) {
+      // "Not found" and "found, but could not be processed" are different answers,
+      // and collapsing them into a bodiless 404 discards the only explanation there
+      // is. A dependency that fails to resolve surfaced as a 404 on the IMPORTING
+      // file — a file plainly present — with the reason thrown away and nothing
+      // logged, so the browser reported only "Failed to fetch dynamically imported
+      // module". Probe the requested id: absent ⇒ genuinely 404; present ⇒ 500
+      // carrying the reason.
+      const present = await rawBytes(id, ctx).catch(() => undefined);
+      if (!present) return new Response(null, { status: 404 });
+      const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      return new Response(reason, {
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
     }
   }
 }

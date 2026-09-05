@@ -89,3 +89,11 @@ free-global allowlist rather than the globals its transformed files have used so
 far — the same order-independence the dependency proxies gained. A client links
 that shared URL on the first importer, so a narrowed body left every later file
 failing with "does not provide an export named 'global'".
+
+**Behaviour change:** `fetch` distinguishes "not found" from "found, but could not
+be processed". A missing path still returns a bodiless `404`; a file that exists
+whose processing failed now returns `500` with the reason as the body, instead of
+the same bodiless `404`. Previously every error inside `serve` collapsed into that
+404, so a dependency that failed to resolve was reported as a missing IMPORTER,
+the reason was discarded and nothing was logged — leaving only the browser's
+`Failed to fetch dynamically imported module`.
