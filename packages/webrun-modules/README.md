@@ -453,6 +453,15 @@ Also exported: `untarTgz(bytes)` (isomorphic npm-tarball unpacker),
   follow, the module surfaces as `default` alone and the API is reached through it
   (`(await import(url)).default.transform`) — ordinary CJS interop, not a failure.
   `esbuild-wasm` is one such package.
+- **A package that depends on a bundler's virtual modules can't be served.**
+  Specifiers like `astro:data-layer-content` or `virtual:…` are invented by a
+  bundler plugin at build time and exist in no registry, so they cannot be
+  resolved — and every specifier is resolved eagerly at transform time, dynamic
+  `import()` included, which is what makes `prime` able to cache a whole graph for
+  offline use. A file reaching for one therefore fails with a `500` naming it, even
+  where the source wraps it in `try { await import(…) } catch {}`. That is
+  deliberate: the alternative silently produces a graph that is only partly
+  resolvable.
 - **Node-only packages don't become browser-runnable.** Resolving and transforming
   a package is not the same as it working: `esbuild`, for instance, reads
   `process.versions.node` at load and drives a native binary over
