@@ -191,6 +191,12 @@ is pinned — seed `lock` (e.g. `{ react: "18.3.1" }`) to honor a project's
 | `target`    | `"browser"`              | Selects `exports` conditions + cache key; `"node"` supported. |
 | `lock`      | —                        | A `Lockfile` (pins versions); `prime` also writes one back. |
 | `basePath`  | `"/"`                    | Mount prefix, e.g. `"/deps/v1/"`. |
+| `depsPath`  | `""`                     | Prefix under `basePath` isolating external package URLs, e.g. `"deps/"`. |
+| `depsFolder`| `"~deps"`                | Per-module-root folder holding dependency proxies (see below). A reserved path segment. |
+| `provided`  | —                        | Names bound to live host instances (see [the `~deps` proxy layer](#the-deps-proxy-layer)). |
+| `globals`   | —                        | Extends/overrides the injectable free-global allowlist. |
+| `resolveEndpoint` | —                  | Swaps the linker deciding how a bare specifier binds. |
+| `cors`      | —                        | `true` → permissive CORS on every response; a record → exactly those headers. |
 
 ### `ModuleServer`
 
@@ -349,7 +355,8 @@ above), and CSS source maps (tracked for a later `map` field on
   untransformed, with a content-type guessed from the extension
   (`application/json`, `text/markdown`, …);
 - append `?raw` to get the raw bytes of *any* file as `application/octet-stream`;
-- an unresolvable path returns a `404` `Response` (never throws).
+- an unresolvable path returns a `404` `Response` (never throws) — including a
+  path that names a directory, or a file the package does not ship.
 
 Mount it under any `basePath` (returned URLs carry the prefix; the cached bytes
 stay portable, because internal imports are rewritten as **relative** URLs):
@@ -358,6 +365,28 @@ stay portable, because internal imports are rewritten as **relative** URLs):
 const server = newModuleServer({ cache, basePath: "/deps/v1/" });
 const r = await server.resolve({ pkg: "zod" }); // → { url: "/deps/v1/zod@3.23.8/lib/index.mjs" }
 ```
+
+### CORS
+
+A browser fetches a module script in CORS mode even for a plain `import`, and
+follows redirects in that same mode — so a cross-origin consumer needs the headers
+on the **whole chain**, not just the response carrying the code. `cors: true`
+merges a permissive set (`*`, GET/HEAD/OPTIONS) onto every response `fetch`
+returns, 302s and 404s included, and answers `OPTIONS` with 204. A record supplies
+exactly those headers instead; omitted, nothing is added.
+
+```ts
+const server = newModuleServer({ cache, cors: true });
+```
+
+If you add your own routes *around* `server.fetch` — redirects, an index page —
+cover them with the exported `corsHeaders(cors)` and `withHeaders(response,
+headers)` rather than a hand-rolled copy. [`examples/http-server.ts`](./examples/http-server.ts)
+does exactly that for its unpkg-style 302s.
+
+CORS is only half of it: the **importing page** must also allow this origin in its
+own `script-src` CSP directive, or the import is blocked before a request is ever
+made — a failure that looks like the server's fault but never reaches it.
 
 ## Errors
 
@@ -369,8 +398,9 @@ const r = await server.resolve({ pkg: "zod" }); // → { url: "/deps/v1/zod@3.23
 ## Utilities
 
 Also exported: `untarTgz(bytes)` (isomorphic npm-tarball unpacker),
-`parseSpecifier(spec)` (bare specifier → `{ pkg, subpath? }`, scope-aware), and
-`relativeUrl(fromId, toId)`.
+`parseSpecifier(spec)` (bare specifier → `{ pkg, subpath? }`, scope-aware),
+`relativeUrl(fromId, toId)`, and the two CORS helpers `corsHeaders(cors)` /
+`withHeaders(response, headers)` described under [CORS](#cors).
 
 ## How it works
 
@@ -384,8 +414,15 @@ Also exported: `untarTgz(bytes)` (isomorphic npm-tarball unpacker),
 - **Transform** — each file becomes browser-runnable ESM one-to-one. ESM/TS/JSX is
   transpiled and its specifiers rewritten in place; CommonJS is wrapped so the ESM
   module graph itself provides `require` (synchronously, backed by the eagerly
-  primed graph). Internal imports are rewritten as **relative** URLs, so cached
-  bytes are portable across mount prefixes.
+  primed graph). A CJS module's body runs inside a deferred `__cjsExec()` factory
+  rather than at module-evaluation time, which keeps CJS's lazy ordering: a
+  circular `require` re-enters that factory and receives the exports published so
+  far, exactly as Node does. That is what makes the common cycle idiom — assign
+  `module.exports`, *then* require your partner — work for packages that rely on
+  it, semver among them. A transformed CJS module therefore carries one extra
+  export, `__cjsExec`, visible in its namespace object. Internal imports are
+  rewritten as **relative** URLs, so cached bytes are portable across mount
+  prefixes.
 
 ## Limitations
 
@@ -397,6 +434,11 @@ Also exported: `untarTgz(bytes)` (isomorphic npm-tarball unpacker),
 - **Free Node globals under `target: "browser"`** (`process.env.NODE_ENV` and
   friends) are solved via the `~deps` proxy layer below — no page-side `define`
   needed.
+- **A require cycle that crosses the ESM/CJS boundary** is not supported: the CJS
+  side reads a binding of a partner that is still evaluating, and ESM has no
+  partially-initialized view to hand back the way CJS's `module.exports` does. It
+  fails with `Cannot access '…' before initialization`. Cycles *between* CJS
+  modules do work — see [How it works](#how-it-works).
 - Bundling/copying the resolved graph into a distributable tree, `.d.ts` type
   serving, package lifecycle scripts, and HMR are out of scope.
 - **`import * as X` of a host-provided module** can't enumerate the instance's
@@ -424,6 +466,15 @@ it once its emitted artifact is in the cache, and the server answers 404 for one
 that is *not* in the cache rather than transforming it as a source. A real
 source directory of that name — `src/vendor/` under `depsFolder: "vendor"` — is
 therefore silently unreachable, so pick a name your sources do not use.
+
+A proxy for a `local`/`cdn` binding re-exports its endpoint **wholesale**
+(`export *`), not merely the names its importers happened to ask for. One proxy is
+shared by every file of its module root, but on the request-time path those files
+are transformed one at a time — and a client links the proxy URL as soon as the
+first of them is linked, then never refetches it. A surface narrowed to the
+importers seen so far would break every later importer needing anything more, and
+would make the emitted body depend on transform order. `export *` carries no
+`default`, so `export { default }` is added for an importer that wants one.
 
 That concentration is the point. The proxy is the seam at which a dependency can
 be substituted — for a host-provided singleton, a pinned build, a patched copy —
