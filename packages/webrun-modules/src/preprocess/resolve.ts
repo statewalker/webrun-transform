@@ -7,7 +7,7 @@ import { proxyBody, proxyId } from "../deps/proxy.js";
 import { resolveNodeBuiltin } from "../resolution/node-builtins.js";
 import { resolveEntry } from "../resolution/resolve-entry.js";
 import { parseSpecifier, relativeUrl } from "../server/specifiers.js";
-import { detectFormat } from "../transform/index.js";
+import { analyze, detectFormat } from "../transform/index.js";
 import type { EndpointBinding, EndpointResolver, ModuleImport, PackageManifest } from "../types.js";
 import { ModuleResolveError } from "../types.js";
 import { isCssFile, type PreprocessContext, urlPath } from "./context.js";
@@ -310,6 +310,35 @@ function mergeProxyShape(
   return grew;
 }
 
+/**
+ * Does the endpoint module itself export a `default`?
+ *
+ * Asked of the ENDPOINT rather than of any importer, so a proxy's `export
+ * { default }` line does not depend on which files of the module root have been
+ * transformed yet — the same reason the named list is not narrowed to them.
+ *
+ * A CJS endpoint always has one: its translation emits `export default` for the
+ * `module.exports` object no matter what the source's own lexed exports look like.
+ * Otherwise the source is analyzed. Unreadable (or unanalyzable) ⇒ `undefined`, and
+ * the caller falls back to the importer's shape rather than guessing — emitting a
+ * `default` the endpoint lacks is a link error for every importer of the proxy.
+ */
+async function endpointExportsDefault(
+  endpointId: string,
+  ctx: PreprocessContext,
+): Promise<boolean | undefined> {
+  return singleFlight(ctx, `endpointdefault:${endpointId}`, async () => {
+    try {
+      const { source, format } = await loadRaw(endpointId, ctx);
+      if (format === "cjs") return true;
+      const { exports } = await analyze(source, format, ctx.target === "browser");
+      return exports.includes("default");
+    } catch {
+      return undefined;
+    }
+  });
+}
+
 /** Serialize writes per proxy id. Each link builds its body from the LIVE
  *  accumulated shape when it RUNS, not when it is queued, so a stale body can
  *  never land after a fuller one — the last write always carries the union.
@@ -364,7 +393,18 @@ export async function ensureProxy(
       merged.binding.kind === "local"
         ? { kind: "local", url: ctx.policy.servedUrl(merged.binding.url, pid) }
         : merged.binding;
-    const body = proxyBody({ binding: wire, imp: merged.imp, registryKey: HOST_REGISTRY_KEY });
+    // Read the endpoint, not the importer, for the `default` decision (see
+    // `endpointExportsDefault`). Only a `local` endpoint is ours to read.
+    const endpointHasDefault =
+      merged.binding.kind === "local"
+        ? await endpointExportsDefault(merged.binding.url, ctx)
+        : undefined;
+    const body = proxyBody({
+      binding: wire,
+      imp: merged.imp,
+      registryKey: HOST_REGISTRY_KEY,
+      endpointHasDefault,
+    });
     const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
     // Sidecar BEFORE the body, from the SAME snapshot. A torn write must leave the
     // sidecar LEADING the artifact, never lagging it: a leading sidecar is repaired

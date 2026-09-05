@@ -473,8 +473,16 @@ shared by every file of its module root, but on the request-time path those file
 are transformed one at a time — and a client links the proxy URL as soon as the
 first of them is linked, then never refetches it. A surface narrowed to the
 importers seen so far would break every later importer needing anything more, and
-would make the emitted body depend on transform order. `export *` carries no
-`default`, so `export { default }` is added for an importer that wants one.
+would make the emitted body depend on transform order.
+
+`export *` carries no `default`, so the default needs its own line — and that line
+is keyed to the **endpoint**, not to the importers: it is emitted exactly when the
+endpoint has a default to give. A CJS endpoint always does (its translation emits
+one for the `module.exports` object); an ESM endpoint is analyzed. Emitting a
+`default` the endpoint lacks would be a link error breaking *every* importer of the
+proxy, not only the one that asked. The one case that cannot be settled this way is
+a `cdn` endpoint, an opaque external URL nothing here can read — that line stays
+keyed to the importer shape.
 
 That concentration is the point. The proxy is the seam at which a dependency can
 be substituted — for a host-provided singleton, a pinned build, a patched copy —

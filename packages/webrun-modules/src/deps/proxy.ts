@@ -48,6 +48,11 @@ export function proxyBody(args: {
   binding: EndpointBinding;
   imp: ModuleImport;
   registryKey: string;
+  /** Whether the ENDPOINT itself exports a `default`, for `local`/`cdn` bindings.
+   *  Supplied by the caller because only it can read the endpoint. When given it
+   *  decides the `export { default }` line; when omitted (a `cdn` URL nothing can
+   *  introspect) the line falls back to this importer's shape. */
+  endpointHasDefault?: boolean;
 }): string {
   const { binding, imp } = args;
   const named = imp.names.filter((n) => IDENT_RE.test(n) && n !== "default");
@@ -76,8 +81,14 @@ export function proxyBody(args: {
   // later importer needing anything more. `export *` is a superset of any named
   // list, so the body no longer depends on transform order.
   const lines: string[] = [`export * from ${q};`];
-  // `export *` deliberately does not carry `default`, and re-exporting a `default`
-  // the endpoint lacks is a link error — so this one stays keyed to the importer.
-  if (imp.hasDefault) lines.push(`export { default } from ${q};`);
+  // `export *` deliberately does not carry `default`, so the default needs its own
+  // line — and it cannot be keyed to the importers seen so far either, for the same
+  // reason the named list could not be. It is keyed to the ENDPOINT instead: emit it
+  // exactly when the endpoint has a default to give, which no importer can change.
+  // Re-exporting a `default` the endpoint lacks is a link error that would break
+  // every importer of the proxy, not only the one that asked for a default.
+  // `endpointHasDefault` undefined means the caller could not read the endpoint (an
+  // opaque `cdn` URL); fall back to this importer's shape, as before.
+  if (args.endpointHasDefault ?? imp.hasDefault) lines.push(`export { default } from ${q};`);
   return lines.join("\n");
 }

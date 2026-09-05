@@ -64,3 +64,11 @@ failing with "Cannot access 'default' before initialization".
 Note that a translated CJS module now carries one extra export, `__cjsExec`,
 which is its deferred factory. It appears in the module's namespace object and in
 anything re-exporting it wholesale.
+
+**Behaviour change:** a proxy's `export { default }` line is keyed to the
+ENDPOINT rather than to its importers, completing the change above. It is emitted
+exactly when the endpoint has a default to give — always for a CJS endpoint, whose
+translation emits one for the `module.exports` object, and by analysis for an ESM
+one. Previously it followed whichever importers had been transformed so far, so a
+module root whose only default importer came later linked a proxy without it.
+A `cdn` endpoint cannot be read, so that one case still follows the importer shape.
