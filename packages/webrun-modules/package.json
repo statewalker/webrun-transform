@@ -35,6 +35,7 @@
     "example:full-cycle": "tsx examples/full-cycle.ts",
     "example:server": "tsx examples/http-server.ts",
     "example:site": "tsx examples/site-pipeline.ts",
+    "example:tsx-page": "tsx examples/tsx-page.ts",
     "example:verify": "tsx examples/verify-deps-layout.ts",
     "prepublishOnly": "pnpm run build"
   },

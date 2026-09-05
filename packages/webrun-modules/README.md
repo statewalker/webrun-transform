@@ -108,13 +108,14 @@ const app = await server.resolve({ url: "/src/app.ts" }); // → importable URL
 
 ## Examples
 
-Three runnable examples (each has a package script; all hit the live npm
+Four runnable examples (each has a package script; all hit the live npm
 registry, so they need network on first run):
 
 ```sh
 pnpm --filter @statewalker/webrun-modules example              # full-cycle (alias)
 pnpm --filter @statewalker/webrun-modules example:full-cycle   # examples/full-cycle.ts
 pnpm --filter @statewalker/webrun-modules example:server       # examples/http-server.ts (unpkg-like)
+pnpm --filter @statewalker/webrun-modules example:tsx-page     # examples/tsx-page.ts (a React page in a browser)
 pnpm --filter @statewalker/webrun-modules example:site         # examples/site-pipeline.ts
 ```
 
@@ -154,6 +155,40 @@ point back at the same server. Use it straight from a browser:
   console.log(merge({ a: 1 }, { b: 2 }));
 </script>
 ```
+
+### A TSX page in a browser — no install, no build
+
+[`examples/tsx-page.ts`](./examples/tsx-page.ts) serves an interactive React page
+whose source is `.tsx`, with no `npm install react` and no bundler anywhere in the
+loop:
+
+```sh
+pnpm --filter @statewalker/webrun-modules example:tsx-page
+# → open http://localhost:8788
+```
+
+The authored project is four files (`index.html`, `main.tsx`, `App.tsx`,
+`styles.css`) held in a `MemFilesApi`. The HTML links the TSX directly —
+
+```html
+<div id="root"></div>
+<script type="module" src="./main.tsx"></script>
+```
+
+— and everything after that is `server.fetch`. The browser asks for `/~/main.tsx`;
+the server strips the types, compiles the JSX, rewrites `react` and
+`react-dom/client` to same-origin URLs, and pulls those packages from the npm
+registry into a temp cache on the way. `App.tsx`'s `import "./styles.css"` becomes
+`./styles.css?module` — Lightning CSS flattens the nesting and the server returns a
+small ESM module that injects a `<style>` tag. The example also prints, on boot,
+what the browser is about to receive (the rewritten specifiers, and
+`listResources` — the exact script set), so it demonstrates the claim headlessly
+too.
+
+**Caveat:** a file's transformed output is cached under its path and reused, so
+editing a source file does not invalidate it — a reload still serves the old
+module. The example takes a fresh temp cache per run, so restarting it suffices; a
+watch-mode dev loop would need the cached artifact evicted on change.
 
 ### In-browser site pipeline (replacing a jspm-based resolver)
 
