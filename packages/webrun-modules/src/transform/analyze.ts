@@ -111,7 +111,7 @@ async function analyzeCjs(source: string): Promise<ModuleDescriptor> {
   cjsReady ??= initCjs();
   await cjsReady;
   const imports: Record<string, ModuleImport> = {};
-  for (const m of source.matchAll(REQUIRE_RE)) imports[m[2]] ??= emptyImport();
+  for (const spec of findRequireSpecifiers(source)) imports[spec] ??= emptyImport();
   let exports: string[] = [];
   try {
     const parsed = parseCjs(source);
@@ -153,6 +153,61 @@ function collectDynamicImports(node: any, importFor: (spec: string) => unknown):
     if (key === "type") continue;
     collectDynamicImports(node[key], importFor);
   }
+}
+
+/**
+ * Minimal recursive AST walk finding every `require("…")` CALL with a single
+ * string-literal argument. Mirrors `collectDynamicImports`; computed arguments
+ * are skipped.
+ */
+function collectRequireCalls(node: any, add: (spec: string) => void): void {
+  if (node == null || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectRequireCalls(item, add);
+    return;
+  }
+  if (typeof node.type !== "string") return;
+  if (
+    node.type === "CallExpression" &&
+    node.callee?.type === "Identifier" &&
+    node.callee.name === "require" &&
+    node.arguments?.length === 1 &&
+    node.arguments[0]?.type === "Literal" &&
+    typeof node.arguments[0].value === "string"
+  ) {
+    add(node.arguments[0].value);
+  }
+  for (const key in node) {
+    if (key === "type") continue;
+    collectRequireCalls(node[key], add);
+  }
+}
+
+/**
+ * Static `require(...)` specifiers, found on the AST rather than in raw text.
+ * A text scan also matches `require(...)` that merely APPEARS inside a string or
+ * template literal — sucrase's `CJSImportProcessor` builds the text
+ * `` `require('${path}');` `` — and would then resolve `${path}` as a package
+ * name. Falls back to the text scan only when the source will not parse at all,
+ * preserving the previous tolerance.
+ */
+export function findRequireSpecifiers(source: string): string[] {
+  const out = new Set<string>();
+  for (const sourceType of ["script", "module"] as const) {
+    try {
+      const ast = acornParse(source, {
+        ecmaVersion: "latest",
+        sourceType,
+        allowReturnOutsideFunction: true,
+      });
+      collectRequireCalls(ast, (spec) => out.add(spec));
+      return [...out];
+    } catch {
+      // try the next parse mode
+    }
+  }
+  for (const m of source.matchAll(REQUIRE_RE)) out.add(m[2]);
+  return [...out];
 }
 
 /** Pull exported binding names out of an `export const/let/var/function/class` decl. */

@@ -1,19 +1,17 @@
 import { parse as acornParse } from "acorn";
 import { init, parse } from "cjs-module-lexer";
 import type { SourceFile, Transform, TransformResult } from "../types.js";
+import { findRequireSpecifiers } from "./analyze.js";
 
 let lexerReady: Promise<unknown> | undefined;
 
-// Matches `require("x")` / `require('x')` with a static string literal argument.
-const REQUIRE_RE = /require\(\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1\s*\)/g;
-
 const IDENT_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
-/** Collect the unique static-string `require(...)` specifiers in a CJS source. */
+/** Collect the unique static-string `require(...)` specifiers in a CJS source.
+ *  AST-based (see `findRequireSpecifiers`) so `require(...)` appearing inside a
+ *  string or template literal is not mistaken for a dependency. */
 function findRequires(source: string): string[] {
-  const set = new Set<string>();
-  for (const m of source.matchAll(REQUIRE_RE)) set.add(m[2]);
-  return [...set];
+  return findRequireSpecifiers(source);
 }
 
 interface Node {
