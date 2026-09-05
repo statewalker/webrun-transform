@@ -518,14 +518,18 @@ export async function resolveProjectId(base: string, ctx: PreprocessContext): Pr
   return base;
 }
 
-/** Try extension/index variants for a package-relative file; return what exists. */
+/** Try extension/index variants for a package-relative file; return what exists.
+ *  Probes for a FILE, not mere existence: `exists()` is true for directories, so a
+ *  specifier like `./parser` would otherwise stop at the `parser/` directory and
+ *  never reach the `/index.js` candidate below it. */
 export async function resolveRawFile(
   pkgKey: string,
   file: string,
   ctx: PreprocessContext,
 ): Promise<string> {
   for (const ext of RAW_EXT) {
-    if (await ctx.cache.exists(`/raw/${pkgKey}/${file}${ext}`)) return file + ext;
+    const stats = await ctx.cache.stats(`/raw/${pkgKey}/${file}${ext}`);
+    if (stats?.kind === "file") return file + ext;
   }
   return file;
 }
@@ -535,9 +539,14 @@ export async function loadRaw(
   id: string,
   ctx: PreprocessContext,
 ): Promise<{ path: string; source: string; format: ReturnType<typeof detectFormat> }> {
+  // Reading a missing path (or a directory) yields zero bytes rather than an
+  // error, which would transform into an EMPTY module served 200 — the browser
+  // then fails far away at "does not provide an export named …". A miss is a miss.
   if (id.startsWith("~/")) {
     if (!ctx.files) throw new ModuleResolveError({ url: id }, "no project FilesApi");
     const path = `/${id.slice(2)}`;
+    if ((await ctx.files.stats(path))?.kind !== "file")
+      throw new ModuleResolveError({ url: id }, "no such file");
     const source = await readText(ctx.files, path);
     return { path, source, format: detectFormat(path, source) };
   }
@@ -546,6 +555,8 @@ export async function loadRaw(
   const [, pkgKey, rawFile] = m;
   await ensureRawByKey(pkgKey, ctx);
   const file = await resolveRawFile(pkgKey, rawFile, ctx);
+  if ((await ctx.cache.stats(`/raw/${pkgKey}/${file}`))?.kind !== "file")
+    throw new ModuleResolveError({ url: id }, "no such file");
   const source = await readText(ctx.cache, `/raw/${pkgKey}/${file}`);
   const manifest = await cachedManifest(pkgKey, ctx).catch(() => undefined);
   return { path: `/${pkgKey}/${file}`, source, format: detectFormat(file, source, manifest) };
@@ -556,15 +567,19 @@ export async function rawBytes(
   id: string,
   ctx: PreprocessContext,
 ): Promise<Uint8Array | undefined> {
+  // `exists()` is true for directories, and reading one yields zero bytes with no
+  // error — which would surface as an empty 200 instead of a miss. Probe for a file.
   if (id.startsWith("~/")) {
     const path = `/${id.slice(2)}`;
-    if (!ctx.files || !(await ctx.files.exists(path))) return undefined;
+    if (!ctx.files || (await ctx.files.stats(path))?.kind !== "file") return undefined;
     return collect(ctx.files.read(path));
   }
   const m = id.match(/^((?:@[^/]+\/)?[^/]+@[^/]+)\/(.+)$/);
   if (!m) return undefined;
   await ensureRawByKey(m[1], ctx);
-  const file = await resolveRawFile(m[1], m[2], ctx);
-  if (!(await ctx.cache.exists(`/raw/${m[1]}/${file}`))) return undefined;
-  return collect(ctx.cache.read(`/raw/${m[1]}/${file}`));
+  // The id is already canonical (the resolver did the extension/index probing), so
+  // read it literally: probing here would serve `dir/index.js`'s bytes at the `dir`
+  // URL, splitting one module across two URLs.
+  if ((await ctx.cache.stats(`/raw/${m[1]}/${m[2]}`))?.kind !== "file") return undefined;
+  return collect(ctx.cache.read(`/raw/${m[1]}/${m[2]}`));
 }
