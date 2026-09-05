@@ -72,3 +72,20 @@ translation emits one for the `module.exports` object, and by analysis for an ES
 one. Previously it followed whichever importers had been transformed so far, so a
 module root whose only default importer came later linked a proxy without it.
 A `cdn` endpoint cannot be read, so that one case still follows the importer shape.
+
+**Fix:** an optional `require` no longer fails the whole graph. A bare specifier
+whose endpoint has nothing importable behind it is left out of the CJS require
+map, so `require` throws at its call site — Node's behaviour for a missing
+module — and `try { x = require("maybe") } catch {}` catches it. Previously every
+static require was hoisted to an eager top-level `import`, turning an optional
+dependency into a hard link-time one: importing `esbuild` died fetching
+`pnpapi@0.0.0/index.js`, a registry placeholder that resolves but ships only a
+`package.json`, and esbuild's own `catch` never ran. A static ESM `import` of a
+missing module has no call site to throw at and still fails loudly at link.
+`Transform`'s `rewrite` callback may now return `undefined` to decline a specifier.
+
+**Behaviour change:** a module root's `~globals.js` proxy exports the whole
+free-global allowlist rather than the globals its transformed files have used so
+far — the same order-independence the dependency proxies gained. A client links
+that shared URL on the first importer, so a narrowed body left every later file
+failing with "does not provide an export named 'global'".

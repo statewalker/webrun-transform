@@ -116,3 +116,53 @@ describe("shared proxy completeness", () => {
     expect(late).not.toContain("export { default } from");
   });
 });
+
+/** One module root whose files use DIFFERENT free globals. The `~globals.js` proxy
+ *  is shared by all of them and linked by a client on the first one. */
+function globalsAppSource(): Source {
+  return {
+    matches: (ref) => "pkg" in ref && ref.pkg === "gapp",
+    async load() {
+      const files = new MemFilesApi();
+      await writeText(files, "/a.js", `export const a = typeof process;`);
+      await writeText(files, "/b.js", `export const b = typeof global;`);
+      return {
+        name: "gapp",
+        version: "1.0.0",
+        files,
+        manifest: {
+          name: "gapp",
+          version: "1.0.0",
+          type: "module",
+          main: "./a.js",
+        } as PackageManifest,
+      };
+    },
+  };
+}
+
+const GLOBALS_PROXY = "http://h/gapp@1.0.0/~deps/~globals.js";
+
+async function globalsProxyAfter(files: string[]): Promise<string> {
+  const server = newModuleServer({ cache: new MemFilesApi(), sources: [globalsAppSource()] });
+  for (const f of files) await server.fetch(new Request(`http://h/gapp@1.0.0/${f}`));
+  return (await server.fetch(new Request(GLOBALS_PROXY))).text();
+}
+
+describe("shared globals proxy completeness", () => {
+  // Same fault as the dep proxies: narrowed to the free globals of the files
+  // transformed so far, while a client links the URL on the first of them. A later
+  // file needing `global` then finds a proxy that does not provide it —
+  // "does not provide an export named 'global'", which is what @jspm/core's
+  // polyfills hit while resolving esbuild's node builtins.
+  it("serves one body regardless of which importers have been transformed", async () => {
+    const early = await globalsProxyAfter(["a.js"]);
+    const late = await globalsProxyAfter(["a.js", "b.js"]);
+    expect(early).toBe(late);
+  });
+
+  it("provides a global no transformed file has used yet", async () => {
+    const early = await globalsProxyAfter(["a.js"]);
+    expect(early).toContain("as global }");
+  });
+});

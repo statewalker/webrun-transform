@@ -5,6 +5,7 @@ import { analyze } from "../transform/analyze.js";
 import { coarseBucket, detectInputType, type PreprocessContext, urlPath } from "./context.js";
 import {
   cssSpecifiers,
+  endpointLoadable,
   ensureGlobalsProxy,
   loadRaw,
   rawBytes,
@@ -66,7 +67,13 @@ export async function jsTransform(
   const map = new Map<string, string>();
   for (const spec of Object.keys(imports)) {
     if (spec === "") continue;
-    const { url } = await resolveSpec(spec, id, imports[spec], ctx);
+    const { url, endpointId } = await resolveSpec(spec, id, imports[spec], ctx);
+    // A CJS `require` of an endpoint with nothing to import is left UNMAPPED, so the
+    // transform omits it and `require` throws at its call site — Node's behaviour for
+    // a missing module, and what the `try { require(x) } catch {}` idiom relies on.
+    // ESM has no call site to throw at, so its specifiers are always mapped and a
+    // missing one fails loudly at link.
+    if (format === "cjs" && endpointId && !(await endpointLoadable(endpointId, ctx))) continue;
     map.set(spec, url);
   }
   // Globals: prepend an import from the module root's globals proxy for allowlisted
@@ -80,7 +87,7 @@ export async function jsTransform(
       relativeUrl(urlPath(id, ctx), urlPath(gid, ctx)),
     )};\n`;
   }
-  const { code } = await ctx.transform.transform({ path, source, format }, (s) => map.get(s) ?? s);
+  const { code } = await ctx.transform.transform({ path, source, format }, (s) => map.get(s));
   await writeText(ctx.cache, emittedId, prelude + code);
   return { code: prelude + code, emittedId };
 }

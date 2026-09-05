@@ -429,6 +429,17 @@ Also exported: `untarTgz(bytes)` (isomorphic npm-tarball unpacker),
 - **Computed `require(expr)`** across package boundaries can't be pre-resolved and
   throws at execution time — the boundary where an `esbuild-wasm` bundle fallback
   would take over.
+- **An optional `require`** — `try { x = require("maybe") } catch {}` — works: a
+  bare specifier with nothing importable behind it is left out of the require map,
+  so the `require` throws at its call site the way Node's `MODULE_NOT_FOUND` does,
+  and the `catch` runs. A *static ESM* `import` of a missing module has no call
+  site to throw at and still fails loudly at link.
+- **Node-only packages don't become browser-runnable.** Resolving and transforming
+  a package is not the same as it working: `esbuild`, for instance, reads
+  `process.versions.node` at load and drives a native binary over
+  `child_process`, so it loads and then fails. Prefer a package with a browser
+  build (`esbuild-wasm` over `esbuild`); `target: "browser"` picks the `browser`
+  condition when the package ships one.
 - Dedupe is greedy (first-resolved version wins per name), not a full constraint
   hoist.
 - **Free Node globals under `target: "browser"`** (`process.env.NODE_ENV` and
@@ -506,7 +517,11 @@ target is `local`, `host`, or `cdn`, with the proxy resolving the binding:
 - **`globals`** — extends/overrides the injectable free-variable allowlist
   (`process`, `Buffer`, `global`, `globalThis`, `__dirname`, `__filename` by
   default). A free variable *not* on the allowlist (e.g. `console`) is left as a
-  native reference, never proxied.
+  native reference, never proxied. The module root's `~globals.js` exports the
+  **whole allowlist**, not just the globals its transformed files happen to use so
+  far — for the same reason a dependency proxy re-exports wholesale: it is shared,
+  a client links it on the first importer, and a later file must not find a name
+  missing.
 - **`resolveEndpoint`** — swaps the linker that decides how a non-provided bare
   specifier binds: `local` (same-origin, served from this server's own cache —
   the default, and the **only** kind the default resolver ever emits: no

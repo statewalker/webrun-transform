@@ -139,10 +139,19 @@ export function newCjsTransform(production = false): Transform {
       // requires — so a dual-build entry (React) imports one instance, not both.
       const source = foldNodeEnv(file.source, nodeEnv);
       const specs = findRequires(source);
+      // A specifier `rewrite` declines cannot be linked — importing it would 404 and
+      // fail the WHOLE graph before this module's body runs. Leaving it out of the
+      // map instead makes `__cjsRequire` throw at the call site, which is what Node
+      // does for a missing module and what `try { require(x) } catch {}` expects.
+      const linked: { spec: string; url: string }[] = [];
+      for (const spec of specs) {
+        const url = rewrite(spec);
+        if (url !== undefined) linked.push({ spec, url });
+      }
       const importLines: string[] = [];
       const mapEntries: string[] = [];
-      specs.forEach((spec, i) => {
-        importLines.push(`import * as __d${i} from ${JSON.stringify(rewrite(spec))};`);
+      linked.forEach(({ spec, url }, i) => {
+        importLines.push(`import * as __d${i} from ${JSON.stringify(url)};`);
         mapEntries.push(`  ${JSON.stringify(spec)}: __d${i},`);
       });
 
@@ -165,7 +174,9 @@ export function newCjsTransform(production = false): Transform {
       // never re-exports `default`, so the `export default module.exports` above
       // stays authoritative.
       const reexportLines = [...new Set(reexports)]
-        .map((spec) => `export * from ${JSON.stringify(rewrite(spec))};`)
+        .map((spec) => rewrite(spec))
+        .filter((url): url is string => url !== undefined)
+        .map((url) => `export * from ${JSON.stringify(url)};`)
         .join("\n");
 
       const dir = file.path.replace(/\/[^/]*$/, "");

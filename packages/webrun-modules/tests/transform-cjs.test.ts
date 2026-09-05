@@ -107,6 +107,49 @@ describe("newCjsTransform (executed)", () => {
     });
   });
 
+  // The optional-require idiom: `require` inside try/catch, failure handled.
+  // esbuild uses it for Yarn PnP's virtual `pnpapi` module. Node throws
+  // MODULE_NOT_FOUND at the CALL and the catch swallows it — but hoisting every
+  // require to an eager top-level `import` turns an optional dependency into a
+  // hard link-time one, and the catch never runs. A specifier the resolver cannot
+  // place (`rewrite` → undefined) must therefore be left OUT of the import map, so
+  // `require` throws where the source can catch it.
+  it("lets an unresolvable optional require throw at the call site, not at link time", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cjs-optional-"));
+    const { code } = await newCjsTransform().transform(
+      {
+        path: "main.js",
+        format: "cjs",
+        source: [
+          "let opt;",
+          'try { opt = require("ghost"); } catch (e) { opt = null; }',
+          'const real = require("./leaf");',
+          "module.exports = { hasOpt: !!opt, leaf: real.tag };",
+        ].join("\n"),
+      },
+      // "ghost" cannot be placed; everything else resolves as usual.
+      (spec) => (spec === "ghost" ? undefined : `${spec}.mjs`),
+    );
+    await writeFile(join(dir, "main.mjs"), code);
+    const leaf = await newCjsTransform().transform(
+      { path: "leaf.js", format: "cjs", source: `module.exports.tag = "leaf";` },
+      (spec) => `${spec}.mjs`,
+    );
+    await writeFile(join(dir, "leaf.mjs"), leaf.code);
+    await writeFile(
+      join(dir, "run.mjs"),
+      'const m = await import("./main.mjs");\nconsole.log(JSON.stringify(m.default));',
+    );
+    const { stdout, stderr, status } = spawnSync(process.execPath, [join(dir, "run.mjs")], {
+      encoding: "utf8",
+    });
+    expect(stderr, "the module must load and run").toBe("");
+    expect(status).toBe(0);
+    // The optional dep is absent (its `require` threw and was caught), and the
+    // module is otherwise fully functional.
+    expect(JSON.parse(stdout)).toEqual({ hasOpt: false, leaf: "leaf" });
+  });
+
   it("surfaces named exports through a `module.exports = require(...)` reexport", async () => {
     // React's entry (`module.exports = require('./cjs/react.development.js')`) is
     // this shape: the entry has no own exports, only a reexport. The interop must

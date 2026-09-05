@@ -105,7 +105,15 @@ export interface TransformResult {
   map?: string;
 }
 export interface Transform {
-  transform(file: SourceFile, rewrite: (specifier: string) => string): Promise<TransformResult>;
+  /** `rewrite` returns the specifier's same-origin URL, or `undefined` when it
+   *  cannot be placed at all. `undefined` means "do not link this": a CJS transform
+   *  leaves it out of the require map so `require` throws at the CALL site, the way
+   *  Node does for a missing module, keeping an optional `try { require(x) } catch`
+   *  catchable instead of failing the whole graph at link time. */
+  transform(
+    file: SourceFile,
+    rewrite: (specifier: string) => string | undefined,
+  ): Promise<TransformResult>;
 }
 
 /** A CSS file to process. `cssModules` runs the engine in CSS-Modules mode. */

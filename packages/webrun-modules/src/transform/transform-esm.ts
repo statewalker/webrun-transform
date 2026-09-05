@@ -48,7 +48,10 @@ export function newEsmTransform(production = false): Transform {
       let out = js;
       for (const sp of spans) {
         const q = out[sp.s]; // opening quote (start includes it)
-        out = out.slice(0, sp.s) + q + rewrite(sp.value) + q + out.slice(sp.e);
+        // A declined specifier keeps its original text: a static ESM `import` has no
+        // call site to throw at, so it must fail loudly at link rather than vanish
+        // and leave its bindings undefined.
+        out = out.slice(0, sp.s) + q + (rewrite(sp.value) ?? sp.value) + q + out.slice(sp.e);
       }
       return { code: out };
     },

@@ -311,32 +311,46 @@ function mergeProxyShape(
 }
 
 /**
- * Does the endpoint module itself export a `default`?
+ * What a `local` endpoint says about itself, read from the endpoint rather than
+ * from any importer — one memoized load answers both questions below.
  *
- * Asked of the ENDPOINT rather than of any importer, so a proxy's `export
- * { default }` line does not depend on which files of the module root have been
- * transformed yet — the same reason the named list is not narrowed to them.
+ * `loadable`: whether there is anything there to import at all. A package can
+ * RESOLVE and still ship nothing — `pnpapi`, Yarn PnP's virtual module, exists on
+ * the registry as a placeholder carrying only a `package.json`, so entry resolution
+ * falls through to an `index.js` that does not exist. Linking to it 404s and takes
+ * the whole graph down with it.
  *
- * A CJS endpoint always has one: its translation emits `export default` for the
+ * `hasDefault`: whether the endpoint exports a `default`, so a proxy's
+ * `export { default }` line does not depend on which files of the module root have
+ * been transformed yet — the same reason the named list is not narrowed to them. A
+ * CJS endpoint always has one: its translation emits `export default` for the
  * `module.exports` object no matter what the source's own lexed exports look like.
- * Otherwise the source is analyzed. Unreadable (or unanalyzable) ⇒ `undefined`, and
- * the caller falls back to the importer's shape rather than guessing — emitting a
- * `default` the endpoint lacks is a link error for every importer of the proxy.
+ * Otherwise the source is analyzed.
  */
-async function endpointExportsDefault(
+async function endpointFacts(
   endpointId: string,
   ctx: PreprocessContext,
-): Promise<boolean | undefined> {
-  return singleFlight(ctx, `endpointdefault:${endpointId}`, async () => {
+): Promise<{ loadable: boolean; hasDefault: boolean }> {
+  return singleFlight(ctx, `endpointfacts:${endpointId}`, async () => {
     try {
       const { source, format } = await loadRaw(endpointId, ctx);
-      if (format === "cjs") return true;
+      if (format === "cjs") return { loadable: true, hasDefault: true };
       const { exports } = await analyze(source, format, ctx.target === "browser");
-      return exports.includes("default");
+      return { loadable: true, hasDefault: exports.includes("default") };
     } catch {
-      return undefined;
+      return { loadable: false, hasDefault: false };
     }
   });
+}
+
+/** Whether a `local` endpoint has anything to import. Consulted before a CJS
+ *  importer links a bare specifier: an endpoint with nothing there must be left
+ *  unlinked so `require` throws at its call site instead of 404-ing the graph. */
+export async function endpointLoadable(
+  endpointId: string,
+  ctx: PreprocessContext,
+): Promise<boolean> {
+  return (await endpointFacts(endpointId, ctx)).loadable;
 }
 
 /** Serialize writes per proxy id. Each link builds its body from the LIVE
@@ -395,10 +409,12 @@ export async function ensureProxy(
         : merged.binding;
     // Read the endpoint, not the importer, for the `default` decision (see
     // `endpointExportsDefault`). Only a `local` endpoint is ours to read.
-    const endpointHasDefault =
-      merged.binding.kind === "local"
-        ? await endpointExportsDefault(merged.binding.url, ctx)
-        : undefined;
+    let endpointHasDefault: boolean | undefined;
+    if (merged.binding.kind === "local") {
+      const facts = await endpointFacts(merged.binding.url, ctx);
+      // Unreadable ⇒ leave the decision to the importer shape rather than guess.
+      endpointHasDefault = facts.loadable ? facts.hasDefault : undefined;
+    }
     const body = proxyBody({
       binding: wire,
       imp: merged.imp,
@@ -440,9 +456,17 @@ export async function ensureGlobalsProxy(
   if (!firstTouch && !grew && (await ctx.cache.exists(key))) return;
   return queueProxyWrite(ctx, gid, async () => {
     const merged = ctx.proxies.get(gid) as { binding: EndpointBinding; imp: ModuleImport };
+    // The WHOLE allowlist, not the globals the files transformed so far happen to
+    // use. This proxy is shared by every file of its module root, and a client links
+    // the URL as soon as the first of them is linked — so a body narrowed to that
+    // first file leaves every later one importing a name it does not provide
+    // ("does not provide an export named 'global'"). Keying it to `ctx.globals`,
+    // which is fixed for the server, makes the body independent of transform order,
+    // exactly as `export *` does for a dependency proxy. The cost is a handful of
+    // unused consts in a module that is generated, tiny, and tree-shaken by a build.
     // Alias form (`const __gI = <expr>; export { __gI as name }`) avoids a TDZ
     // ReferenceError for a global whose expression is the bare `globalThis` token.
-    const body = merged.imp.names
+    const body = Object.keys(ctx.globals)
       .map((n, i) => `const __g${i} = ${ctx.globals[n]};\nexport { __g${i} as ${n} };`)
       .join("\n");
     const shape = JSON.stringify(merged.imp); // snapshotted with the body, synchronously
