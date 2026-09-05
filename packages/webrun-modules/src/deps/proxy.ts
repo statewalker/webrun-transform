@@ -68,9 +68,16 @@ export function proxyBody(args: {
   // local | cdn — a real ESM endpoint we can re-export from; `binding.url` is the
   // ready endpoint URL (relative for `local`, absolute for `cdn`).
   const q = JSON.stringify(binding.url);
-  const lines: string[] = [];
-  if (named.length) lines.push(`export { ${[...new Set(named)].join(", ")} } from ${q};`);
+  // Re-export the endpoint WHOLESALE rather than the bindings this importer asked
+  // for. One proxy is shared by every file of a module root, but on the lazy server
+  // path those files are transformed one at a time — and a client links the proxy
+  // URL as soon as the FIRST of them is linked, then never refetches it. A surface
+  // narrowed to the importers seen so far is therefore a surface that breaks every
+  // later importer needing anything more. `export *` is a superset of any named
+  // list, so the body no longer depends on transform order.
+  const lines: string[] = [`export * from ${q};`];
+  // `export *` deliberately does not carry `default`, and re-exporting a `default`
+  // the endpoint lacks is a link error — so this one stays keyed to the importer.
   if (imp.hasDefault) lines.push(`export { default } from ${q};`);
-  if (imp.hasNamespace || (!named.length && !imp.hasDefault)) lines.push(`export * from ${q};`);
   return lines.join("\n");
 }

@@ -85,7 +85,9 @@ describe("~deps proxy layer", () => {
     const code = await (await server.fetch(new Request("http://h/~/app.ts"))).text();
     expect(code).toContain("./~deps/dep/index.js");
     const proxy = await (await server.fetch(new Request("http://h/~/~deps/dep/index.js"))).text();
-    expect(proxy).toContain("export { hi } from");
+    // Wholesale, not `export { hi }`: other files of this module root may need
+    // bindings this one never named, and they share this one already-linked URL.
+    expect(proxy).toContain("export * from");
     expect(proxy).toContain("dep@1.0.0/index.js"); // re-exports the pinned local endpoint
   });
 

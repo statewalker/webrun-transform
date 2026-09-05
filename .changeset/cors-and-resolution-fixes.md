@@ -30,3 +30,22 @@ and split one module across two URLs.
 missing path yields zero bytes with no error, which was transformed into an
 empty module — the browser then failed far from the cause, at "does not provide
 an export named …".
+
+**Fix:** CJS/ESM detection consults the AST when a source carries BOTH a CJS and
+an ESM marker. `module.exports` / `exports.` matched wherever they appeared —
+inside a string, a template literal or a comment included — and won over real
+`import`/`export` syntax, so sucrase's ESM transformers (which emit that text as
+their output) were wrapped in the CJS function wrapper and rejected by the
+browser. Unambiguous sources keep the cheap regex path, and a source that will
+not parse falls back to the previous heuristics.
+
+**Behaviour change:** a `local`/`cdn` `~deps` proxy now re-exports its endpoint
+WHOLESALE (`export *`) instead of naming the bindings its importers asked for.
+One proxy is shared by every file of a module root, but on the lazy server path
+those files are transformed one at a time, and a client links the proxy URL as
+soon as the first of them is linked — so a surface narrowed to the importers seen
+so far broke every later importer needing anything more, and the emitted body
+depended on transform order. `export *` is a superset of any named list, so the
+body is now identical whichever importer arrives first. `export { default }` is
+still emitted only for an importer that wants one, because `export *` does not
+carry `default` and re-exporting one the endpoint lacks is a link error.

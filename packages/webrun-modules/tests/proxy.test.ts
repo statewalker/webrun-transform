@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { depsEntryPath, depsRoot, proxyBody, proxyId } from "../src/deps/proxy.js";
+import type { ModuleImport } from "../src/types.js";
 
 describe("depsRoot", () => {
   it("is the project root for authored sources and the package root for npm files", () => {
@@ -57,17 +58,35 @@ describe("proxyId", () => {
 });
 
 describe("proxyBody", () => {
-  it("local binding re-exports names + default + namespace from the relative endpoint", () => {
+  // The body is deliberately INDEPENDENT of `imp.names`: one proxy is shared by
+  // every file of a module root, a client links it on the first importer, and a
+  // surface narrowed to the importers seen so far breaks all the later ones.
+  it("local binding re-exports the endpoint wholesale, whatever this importer named", () => {
     const id = proxyId("pkg@1/foo.js", "lodash-es");
+    const forImport = (imp: ModuleImport) =>
+      proxyBody({
+        proxyId: id,
+        binding: { kind: "local", url: "IGNORED" },
+        imp,
+        registryKey: "__webrunHostRegistry",
+      });
+    // endpoint is resolved by the server and passed as binding.url; here we assert re-export shape
+    const body = forImport({ names: ["debounce"], hasNamespace: true, hasDefault: false });
+    expect(body).toContain("export * from");
+    expect(forImport({ names: ["throttle"], hasNamespace: false, hasDefault: false })).toBe(body);
+    expect(forImport({ names: [], hasNamespace: false, hasDefault: false })).toBe(body);
+  });
+
+  it("local binding adds `default` only for an importer that wants it", () => {
     const body = proxyBody({
-      proxyId: id,
+      proxyId: proxyId("pkg@1/foo.js", "lodash-es"),
       binding: { kind: "local", url: "IGNORED" },
-      imp: { names: ["debounce"], hasNamespace: true, hasDefault: false },
+      imp: { names: [], hasNamespace: false, hasDefault: true },
       registryKey: "__webrunHostRegistry",
     });
-    // endpoint is resolved by the server and passed as binding.url; here we assert re-export shape
-    expect(body).toContain("export { debounce } from");
-    expect(body).toContain("export * from");
+    // `export *` does not carry `default`, and re-exporting one the endpoint
+    // lacks is a link error — so this line cannot be emitted unconditionally.
+    expect(body).toContain("export { default } from");
   });
 
   it("host binding reads the shared registry and preserves the instance as default", () => {
