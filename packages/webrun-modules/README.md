@@ -275,8 +275,8 @@ registry URL.
 
 The default transform (`newDefaultTransform()`) dispatches per file: ESM/TS/JSX go
 through `newEsmTransform()`, CommonJS through `newCjsTransform()`. Swap in your own
-`Transform` — it receives one file and a `rewrite(specifier) => url` callback and
-returns browser-runnable ESM:
+`Transform` — it receives one file and a `rewrite(specifier) => url | undefined`
+callback and returns browser-runnable ESM:
 
 ```ts
 import { newDefaultTransform, detectFormat } from "@statewalker/webrun-modules";
@@ -285,7 +285,12 @@ import type { Transform } from "@statewalker/webrun-modules";
 const myTransform: Transform = {
   async transform(file, rewrite) {
     // file = { path, source, format: "esm" | "cjs" | "ts" | "tsx" }
-    // call rewrite(spec) for each import specifier to get its local URL
+    // call rewrite(spec) for each import specifier to get its local URL.
+    // `undefined` means the specifier cannot be placed: do not link it. A CJS
+    // transform leaves it out of its require map so `require` throws at the CALL
+    // site (see the optional-`require` note under Limitations); an ESM transform
+    // has no call site to throw at, so it keeps the original specifier and lets
+    // the link fail loudly.
     return /* transformed ESM */ file.source;
   },
 };
@@ -434,6 +439,11 @@ Also exported: `untarTgz(bytes)` (isomorphic npm-tarball unpacker),
   so the `require` throws at its call site the way Node's `MODULE_NOT_FOUND` does,
   and the `catch` runs. A *static ESM* `import` of a missing module has no call
   site to throw at and still fails loudly at link.
+- **A CJS package's named exports are only the ones `cjs-module-lexer` can see
+  statically.** Where a package assigns its exports in a way the lexer cannot
+  follow, the module surfaces as `default` alone and the API is reached through it
+  (`(await import(url)).default.transform`) — ordinary CJS interop, not a failure.
+  `esbuild-wasm` is one such package.
 - **Node-only packages don't become browser-runnable.** Resolving and transforming
   a package is not the same as it working: `esbuild`, for instance, reads
   `process.versions.node` at load and drives a native binary over

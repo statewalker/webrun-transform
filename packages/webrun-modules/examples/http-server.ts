@@ -87,7 +87,14 @@ async function handle(request: Request): Promise<Response> {
   // Otherwise resolve the spec to its pinned entry and redirect (unpkg-style).
   try {
     const resolved = await server.resolve(spec);
-    return new Response(null, { status: 302, headers: { location: resolved.url } });
+    // Carry the query across the redirect. `?raw` and `?module` select what the
+    // module server RETURNS for a URL, so dropping them here silently hands back a
+    // transformed module where raw bytes or the CSS-in-JS wrapper were asked for
+    // (`?meta`/`?graph` never get this far — they are answered above).
+    return new Response(null, {
+      status: 302,
+      headers: { location: resolved.url + url.search },
+    });
   } catch {
     return new Response("not found\n", { status: 404, headers: { "content-type": "text/plain" } });
   }
