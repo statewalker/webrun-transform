@@ -49,3 +49,18 @@ depended on transform order. `export *` is a superset of any named list, so the
 body is now identical whichever importer arrives first. `export { default }` is
 still emitted only for an importer that wants one, because `export *` does not
 carry `default` and re-exporting one the endpoint lacks is a link error.
+
+**Fix:** circular `require`s between CJS modules work. A translated CJS module's
+body now runs inside a deferred `__cjsExec()` factory instead of at module
+evaluation time, and `require` calls that factory on its target. Re-entry returns
+the exports published so far, which is exactly what Node's `require` returns for
+a cycle — so the standard idiom of assigning `module.exports` before requiring a
+partner (semver's `classes/range.js` ↔ `classes/comparator.js`, and any package
+using it) behaves as it does under Node. Previously the requires were hoisted to
+eager top-level `import`s, which inverted the order the idiom depends on: the
+partner's body ran first and read a `default` still in the temporal dead zone,
+failing with "Cannot access 'default' before initialization".
+
+Note that a translated CJS module now carries one extra export, `__cjsExec`,
+which is its deferred factory. It appears in the module's namespace object and in
+anything re-exporting it wholesale.

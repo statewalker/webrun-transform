@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +46,65 @@ describe("newCjsTransform (executed)", () => {
     const leaf = await import(pathToFileURL(join(dir, "leaf.mjs")).href);
     expect(leaf.double(5)).toBe(10); // named export snapshot importable
     expect(leaf.tag).toBe("leaf");
+  });
+
+  // semver's classes/range.js <-> classes/comparator.js: each assigns
+  // `module.exports` BEFORE requiring its partner, the standard CJS idiom for
+  // breaking a cycle. Node honours it because `require` is lazy — the partner's
+  // body starts at the require site, by which time the requirer has published.
+  // Hoisting requires to top-level `import`s inverts that order, so the
+  // translation has to defer execution the same way Node does.
+  //
+  // Run in a CHILD NODE PROCESS, not through `await import` here: vitest's module
+  // runner does not reproduce ESM temporal-dead-zone semantics, and this bug is a
+  // TDZ read of a cyclic partner's `default`. Under vitest the broken output
+  // merely yields `undefined`; under a real ESM loader it throws.
+  it("survives a require cycle where each module publishes before requiring", async () => {
+    const dir = await build({
+      "range.mjs": {
+        path: "range.js",
+        format: "cjs",
+        source: [
+          "class Range {}",
+          "module.exports = Range",
+          'const Comparator = require("./comparator")',
+          "module.exports.partner = Comparator.name",
+        ].join("\n"),
+      },
+      "comparator.mjs": {
+        path: "comparator.js",
+        format: "cjs",
+        source: [
+          "class Comparator {}",
+          "module.exports = Comparator",
+          'const Range = require("./range")',
+          "module.exports.partner = Range.name",
+        ].join("\n"),
+      },
+    });
+    // Entering through either side must work, and each must see its partner.
+    await writeFile(
+      join(dir, "main.mjs"),
+      [
+        'const r = await import("./range.mjs");',
+        'const c = await import("./comparator.mjs");',
+        "console.log(JSON.stringify({",
+        "  range: r.default?.name, rangePartner: r.default?.partner,",
+        "  comparator: c.default?.name, comparatorPartner: c.default?.partner,",
+        "}));",
+      ].join("\n"),
+    );
+    const { stdout, stderr, status } = spawnSync(process.execPath, [join(dir, "main.mjs")], {
+      encoding: "utf8",
+    });
+    expect(stderr, "child process must not throw").not.toContain("ReferenceError");
+    expect(status).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({
+      range: "Range",
+      rangePartner: "Comparator",
+      comparator: "Comparator",
+      comparatorPartner: "Range",
+    });
   });
 
   it("surfaces named exports through a `module.exports = require(...)` reexport", async () => {

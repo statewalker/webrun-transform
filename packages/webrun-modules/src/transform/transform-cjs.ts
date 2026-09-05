@@ -156,7 +156,7 @@ export function newCjsTransform(production = false): Transform {
         names = []; // lexer can't parse → default-only interop
       }
       const namedExports = [...new Set(names)]
-        .map((n) => `export const ${n} = module.exports.${n};`)
+        .map((n) => `export const ${n} = __x.${n};`)
         .join("\n");
       // A `module.exports = require("x")` entry (e.g. React's `index.js`) has no
       // own statically-lexable names — only a reexport. Surface x's named exports
@@ -169,19 +169,39 @@ export function newCjsTransform(production = false): Transform {
         .join("\n");
 
       const dir = file.path.replace(/\/[^/]*$/, "");
+      // The body runs inside a DEFERRED factory rather than at module-evaluation
+      // time, because `require` in CJS is lazy and this translation makes it eager.
+      // A cycle survives in Node only because the partner's body starts at the
+      // require SITE, by which time the requirer has already published its
+      // `module.exports` (the "hoisted class for cyclic dependency" idiom). Hoisting
+      // requires to top-level `import`s inverts that order, so the partner's body
+      // runs first and reads an export that has not been initialized yet.
+      //
+      // `__cjsExec` restores Node's ordering: a cyclic partner calls it at its own
+      // require site, and re-entry returns the exports published SO FAR instead of
+      // recursing. Everything it touches must be readable before this module's body
+      // has run, which means `var` (hoisted AND initialized) and function
+      // declarations only — a `let`/`const` would be in the temporal dead zone,
+      // which is the very failure being fixed.
       const code = [
         ...importLines,
-        `const __ns = {\n${mapEntries.join("\n")}\n};`,
-        `const module = { exports: {} };`,
-        `const require = (s) => {`,
-        `  const m = __ns[s];`,
+        `var __m;`,
+        `function __cjsRequire(s) {`,
+        `  const m = {\n${mapEntries.join("\n")}\n}[s];`,
         `  if (!m) throw new Error("Cannot require (computed/unresolved): " + s);`,
+        `  if (typeof m.__cjsExec === "function") return m.__cjsExec();`,
         `  return m.default !== undefined ? m.default : m;`,
-        `};`,
-        `(function (module, exports, require, __filename, __dirname) {`,
+        `}`,
+        `export function __cjsExec() {`,
+        `  if (__m) return __m.exports;`,
+        `  __m = { exports: {} };`,
+        `  (function (module, exports, require, __filename, __dirname) {`,
         source,
-        `}).call(module.exports, module, module.exports, require, ${JSON.stringify(file.path)}, ${JSON.stringify(dir)});`,
-        `export default module.exports;`,
+        `  }).call(__m.exports, __m, __m.exports, __cjsRequire, ${JSON.stringify(file.path)}, ${JSON.stringify(dir)});`,
+        `  return __m.exports;`,
+        `}`,
+        `const __x = __cjsExec();`,
+        `export default __x;`,
         namedExports,
         reexportLines,
       ]
