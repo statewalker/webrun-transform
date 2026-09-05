@@ -160,6 +160,10 @@ export interface ModuleServerOptions {
   globals?: Record<string, string>;
   /** Swap the linker. Default binds provided/globals to host, else local. */
   resolveEndpoint?: EndpointResolver;
+  /** CORS headers merged onto every response from `fetch()`, including 302s and
+   *  404s, with `OPTIONS` answered 204. `true` → permissive defaults (`*`,
+   *  GET/HEAD/OPTIONS); a record → exactly those headers. Omitted → none. */
+  cors?: boolean | Record<string, string>;
 }
 
 export interface ModuleServer {

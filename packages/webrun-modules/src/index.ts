@@ -25,6 +25,7 @@ export { makeDefaultEndpointResolver, rawBytes, resolveSpec } from "./preprocess
 export { walkFrom } from "./preprocess/walk.js";
 export { resolveNodeBuiltin } from "./resolution/node-builtins.js";
 export { resolveEntry } from "./resolution/resolve-entry.js";
+export { corsHeaders, withHeaders } from "./server/cors.js";
 export { newModuleServer } from "./server/new-module-server.js";
 export { parseSpecifier, relativeUrl } from "./server/specifiers.js";
 export type { NpmRegistrySourceOptions } from "./sources/npm-registry-source.js";

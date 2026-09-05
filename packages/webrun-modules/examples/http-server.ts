@@ -11,6 +11,11 @@
  *   curl     'localhost:8787/lodash-es@4/merge'
  *   <script type="module">import ms from "http://localhost:8787/ms"; …</script>
  *
+ * Every response is CORS-open via `newModuleServer({ cors: true })`, so pages served
+ * from any other origin can import from it. Note that the *importing page* must also
+ * allow this origin in its own `script-src` CSP directive, or the import is blocked
+ * before the request is ever made.
+ *
  * Endpoints:
  *   GET /{name}[@{range}][/{subpath}]        → 302 redirect to the pinned URL
  *   GET /{name}@{version}/{file}             → the transformed, importable ESM
@@ -26,7 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeFilesApi } from "@statewalker/webrun-files-node";
 import semver from "semver";
-import { newModuleServer, npmRegistrySource } from "../src/index.js";
+import { corsHeaders, newModuleServer, npmRegistrySource } from "../src/index.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const cacheDir = await mkdtemp(join(tmpdir(), "webrun-modules-unpkg-"));
@@ -35,6 +40,7 @@ const server = newModuleServer({
   cache: new NodeFilesApi({ rootDir: cacheDir }),
   sources: [npmRegistrySource()],
   target: "browser", // serve browser-runnable ESM, like unpkg's ?module
+  cors: true, // browsers fetch module scripts in CORS mode, even for a plain import
 });
 
 /** Split an unpkg-style spec into { pkg, version?, subpath? }. */
@@ -87,8 +93,20 @@ async function handle(request: Request): Promise<Response> {
   }
 }
 
+// `cors: true` covers everything ModuleServer.fetch returns. The routes THIS file
+// adds around it — the unpkg-style 302s, the index text, the ?meta/?graph JSON —
+// are ours to cover, so apply the same header set (from the library, not a copy)
+// at the adapter, where every response passes through exactly once.
+const CORS = corsHeaders(true);
+
 // Minimal Node http → Web-fetch adapter (no framework: server.fetch is standard).
 const http = createServer(async (nodeReq, nodeRes) => {
+  for (const [k, v] of Object.entries(CORS)) nodeRes.setHeader(k, v);
+  if (nodeReq.method === "OPTIONS") {
+    nodeRes.statusCode = 204;
+    nodeRes.end();
+    return;
+  }
   const url = `http://${nodeReq.headers.host ?? `localhost:${PORT}`}${nodeReq.url}`;
   const response = await handle(new Request(url, { method: nodeReq.method }));
   nodeRes.statusCode = response.status;

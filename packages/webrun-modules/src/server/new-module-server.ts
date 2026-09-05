@@ -26,6 +26,7 @@ import type {
   ResolvedModule,
 } from "../types.js";
 import { ModuleResolveError } from "../types.js";
+import { corsHeaders, withHeaders } from "./cors.js";
 
 /** JS/TS module files — the only ones the transform touches. */
 const MODULE_EXT = /\.(?:m|c)?[jt]sx?$/;
@@ -59,6 +60,7 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
   const transformer = options.transform ?? newDefaultTransform(target === "browser");
   const cssTransformer = options.css ?? newDefaultCssTransform();
   const basePath = normalizeBase(options.basePath ?? "/");
+  const cors = corsHeaders(options.cors);
   // Optional prefix (relative to `basePath`) for external package URLs, so npm
   // deps can be isolated under e.g. `/deps/` while authored project files stay at
   // `~/`. Default "" ⇒ packages served alongside project files (unchanged).
@@ -198,62 +200,71 @@ export function newModuleServer(options: ModuleServerOptions): ModuleServer {
       return files.sort();
     },
 
+    // Public entry: applies CORS to every exit path of `serve` (and to the
+    // preflight) so no individual `return new Response(...)` has to remember to.
     async fetch(request: Request): Promise<Response> {
-      await init();
-      const url = new URL(request.url);
-      const id = idFromPath(url.pathname);
-      try {
-        // `?raw` → octet-stream; `?module` on a `.json` → ESM wrapper; non-module
-        // files (json/md/css/…) → raw + guessed type.
-        if (url.searchParams.has("raw")) return await serveRaw(id, true);
-        if (url.searchParams.has("module") && id.endsWith(".json")) {
-          const code = await serveJsonModule(id, ctx);
-          if (code === undefined) return new Response(null, { status: 404 });
-          return new Response(code, {
-            status: 200,
-            headers: { "content-type": "text/javascript" },
-          });
-        }
-        if (isCssFile(id)) {
-          const cssModules = /\.module\.css$/.test(id);
-          if (!url.searchParams.has("module")) {
-            const cachedCss = await cache.exists(`${tRoot}/${id}`);
-            const code = cachedCss
-              ? await readText(cache, `${tRoot}/${id}`)
-              : (await cssTransformAndCache(id)).code;
-            return new Response(code, { status: 200, headers: { "content-type": "text/css" } });
-          }
-          const cachedExports = await cache.exists(`${tRoot}/${id}.exports.json`);
-          const result = cachedExports
-            ? {
-                code: await readText(cache, `${tRoot}/${id}`),
-                exports: JSON.parse(await readText(cache, `${tRoot}/${id}.exports.json`)),
-              }
-            : await cssTransformAndCache(id);
-          return new Response(cssModuleWrapper(result.code, result.exports, cssModules), {
-            status: 200,
-            headers: { "content-type": "text/javascript" },
-          });
-        }
-        if (!isModuleFile(id)) return await serveRaw(id, false);
-        // module files → transform to ESM. `~deps` proxies are pre-generated into
-        // `/t/{target}`; a missing one has no `/raw/` to transform → 404 (never
-        // routed through transformAndCache).
-        const cached = await cache.exists(`${tRoot}/${id}`);
-        const isProxy = id.includes(`/${ctx.depsFolder}/`);
-        if (!cached && isProxy) return new Response(null, { status: 404 });
-        const body = cached ? await readText(cache, `${tRoot}/${id}`) : await transformAndCache(id);
-        // A proxy's body GROWS as more files of its module are transformed (its
-        // export surface is the union of its importers'). On the lazy fetch path a
-        // browser could otherwise heuristically cache a partial one.
-        const headers: Record<string, string> = { "content-type": "text/javascript" };
-        if (isProxy) headers["cache-control"] = "no-cache";
-        return new Response(body, { status: 200, headers });
-      } catch {
-        return new Response(null, { status: 404 });
+      if (request.method === "OPTIONS" && Object.keys(cors).length > 0) {
+        return withHeaders(new Response(null, { status: 204 }), cors);
       }
+      return withHeaders(await serve(request), cors);
     },
   };
+
+  async function serve(request: Request): Promise<Response> {
+    await init();
+    const url = new URL(request.url);
+    const id = idFromPath(url.pathname);
+    try {
+      // `?raw` → octet-stream; `?module` on a `.json` → ESM wrapper; non-module
+      // files (json/md/css/…) → raw + guessed type.
+      if (url.searchParams.has("raw")) return await serveRaw(id, true);
+      if (url.searchParams.has("module") && id.endsWith(".json")) {
+        const code = await serveJsonModule(id, ctx);
+        if (code === undefined) return new Response(null, { status: 404 });
+        return new Response(code, {
+          status: 200,
+          headers: { "content-type": "text/javascript" },
+        });
+      }
+      if (isCssFile(id)) {
+        const cssModules = /\.module\.css$/.test(id);
+        if (!url.searchParams.has("module")) {
+          const cachedCss = await cache.exists(`${tRoot}/${id}`);
+          const code = cachedCss
+            ? await readText(cache, `${tRoot}/${id}`)
+            : (await cssTransformAndCache(id)).code;
+          return new Response(code, { status: 200, headers: { "content-type": "text/css" } });
+        }
+        const cachedExports = await cache.exists(`${tRoot}/${id}.exports.json`);
+        const result = cachedExports
+          ? {
+              code: await readText(cache, `${tRoot}/${id}`),
+              exports: JSON.parse(await readText(cache, `${tRoot}/${id}.exports.json`)),
+            }
+          : await cssTransformAndCache(id);
+        return new Response(cssModuleWrapper(result.code, result.exports, cssModules), {
+          status: 200,
+          headers: { "content-type": "text/javascript" },
+        });
+      }
+      if (!isModuleFile(id)) return await serveRaw(id, false);
+      // module files → transform to ESM. `~deps` proxies are pre-generated into
+      // `/t/{target}`; a missing one has no `/raw/` to transform → 404 (never
+      // routed through transformAndCache).
+      const cached = await cache.exists(`${tRoot}/${id}`);
+      const isProxy = id.includes(`/${ctx.depsFolder}/`);
+      if (!cached && isProxy) return new Response(null, { status: 404 });
+      const body = cached ? await readText(cache, `${tRoot}/${id}`) : await transformAndCache(id);
+      // A proxy's body GROWS as more files of its module are transformed (its
+      // export surface is the union of its importers'). On the lazy fetch path a
+      // browser could otherwise heuristically cache a partial one.
+      const headers: Record<string, string> = { "content-type": "text/javascript" };
+      if (isProxy) headers["cache-control"] = "no-cache";
+      return new Response(body, { status: 200, headers });
+    } catch {
+      return new Response(null, { status: 404 });
+    }
+  }
 }
 
 function normalizeBase(base: string): string {
