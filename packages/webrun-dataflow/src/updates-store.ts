@@ -150,7 +150,5 @@ export interface UpdatesStore {
    */
   removeUpdate(key: { signal: Signal; uri: string }): Promise<void>;
   /** Sequential equivalent of `keys.forEach(removeUpdate)`. No atomicity promise. */
-  removeUpdates(
-    keys: ReadonlyArray<{ signal: Signal; uri: string }>,
-  ): Promise<void>;
+  removeUpdates(keys: ReadonlyArray<{ signal: Signal; uri: string }>): Promise<void>;
 }

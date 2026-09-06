@@ -1,10 +1,6 @@
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it } from "vitest";
-import {
-  coarseBucket,
-  detectInputType,
-  newDefaultTransformRegistry,
-} from "../src/index.js";
+import { coarseBucket, detectInputType, newDefaultTransformRegistry } from "../src/index.js";
 import { newModuleServer } from "../src/server/new-module-server.js";
 import type { CssTransform } from "../src/types.js";
 
