@@ -49,9 +49,15 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
  * accumulated shape the shared proxy is rewritten with that one importer's names
  * and the unchanged importer's already-emitted module imports names that no
  * longer exist.
+ *
+ * A proxy bound to a real ESM endpoint (an npm package) now re-exports it
+ * WHOLESALE — `export * from "<endpoint>"` — so it enumerates no per-importer
+ * names and cannot narrow by construction; what those cases must still prove is
+ * that the body tracks the current ENDPOINT. The name-accumulation invariant is
+ * live only for `host` bindings (the globals proxy), which do enumerate names.
  */
 describe("newProjectBuild — a shared proxy never narrows across builds", () => {
-  it("keeps both importers' names when a fresh build re-emits a shared npm proxy", async () => {
+  it("re-exports a shared npm proxy wholesale, so a fresh build cannot narrow it", async () => {
     const project = new MemFilesApi();
     await writeText(project, "/a.ts", `import { hi } from "greet";\nexport const A = hi;`);
     await writeText(project, "/b.ts", `import { yo } from "greet";\nexport const B = yo;`);
@@ -60,8 +66,9 @@ describe("newProjectBuild — a shared proxy never narrows across builds", () =>
 
     await newProjectBuild({ project, cache, sources }).build();
     const cold = await readText(cache, "/~/~deps/greet/index.js");
-    expect(cold).toContain("hi");
-    expect(cold).toContain("yo");
+    // One wholesale re-export of the endpoint — a superset of anything either
+    // importer asked for, so there is no name list that a later build could lose.
+    expect(cold).toContain(`export * from "../../../greet@1.0.0/index.js"`);
     // Both emitted modules import from the one shared proxy.
     expect(await readText(cache, "/~/a.js")).toContain(`"./~deps/greet/index.js"`);
     expect(await readText(cache, "/~/b.js")).toContain(`"./~deps/greet/index.js"`);
@@ -74,8 +81,9 @@ describe("newProjectBuild — a shared proxy never narrows across builds", () =>
     await newProjectBuild({ project, cache, sources }).build();
 
     const warm = await readText(cache, "/~/~deps/greet/index.js");
-    expect(warm).toContain("yo");
-    expect(warm).toContain("hi"); // the unchanged importer's name must survive
+    // Rewritten from only `b.ts`, and still the same wholesale re-export: the
+    // unchanged importer's names remain reachable through it.
+    expect(warm).toContain(`export * from "../../../greet@1.0.0/index.js"`);
   });
 
   it("keeps both importers' globals when a fresh build re-emits the globals proxy", async () => {
@@ -148,15 +156,19 @@ describe("newProjectBuild — a shared proxy never narrows across builds", () =>
     const warm = await readText(cache, "/~/~deps/greet/index.js");
     expect(warm).toContain("greet@2.0.0/index.js"); // the new binding propagated
     expect(warm).not.toContain("greet@1.0.0/index.js");
-    expect(warm).toContain("hi"); // …without narrowing the accumulated shape
-    expect(warm).toContain("yo");
+    expect(warm).toContain("export *"); // …still wholesale, so nothing narrowed
   });
 
-  it("repairs a body that a torn write left narrower than its shape sidecar", async () => {
+  it("rebuilds a body that a torn write left truncated, rather than trusting it", async () => {
     // A crash between the shape sidecar's write and the body's write leaves the
-    // sidecar LEADING the artifact. The next run must rebuild the body from the
-    // seeded union rather than trust the artifact, or the name the sidecar already
-    // promises stays missing from the emitted proxy forever.
+    // sidecar LEADING the artifact, and the artifact itself possibly half-written.
+    // The next run must re-derive the body rather than trust what it finds.
+    //
+    // This used to be stated as "the sidecar names a binding the body is missing".
+    // That shape of damage is no longer reachable: a dependency proxy re-exports
+    // its endpoint wholesale and a globals proxy emits the whole allowlist, so
+    // neither body is a function of the importers seen so far. What is still worth
+    // holding is the weaker, real guarantee — a damaged body does not survive.
     const project = new MemFilesApi();
     await writeText(project, "/a.ts", `import { hi } from "greet";\nexport const A = hi;`);
     await writeText(project, "/b.ts", `import { yo } from "greet";\nexport const B = yo;`);
@@ -164,24 +176,22 @@ describe("newProjectBuild — a shared proxy never narrows across builds", () =>
     const sources = [memSource(PKGS)];
 
     await newProjectBuild({ project, cache, sources }).build();
-    const shapePath = "/~/~deps/greet/index.js.shape.json";
-    expect(await readText(cache, "/~/~deps/greet/index.js")).not.toContain("hey");
+    const bodyPath = "/~/~deps/greet/index.js";
+    expect(await readText(cache, bodyPath)).toContain("export *");
 
-    // Simulate the torn state: the sidecar records a third importer's name, the
-    // body write never landed.
+    // Simulate the torn state: the sidecar landed, the body was left truncated.
     await writeText(
       cache,
-      shapePath,
-      JSON.stringify({ names: ["hi", "yo", "hey"], hasDefault: false, hasNamespace: false }),
+      "/~/~deps/greet/index.js.shape.json",
+      JSON.stringify({ names: ["hi", "yo"], hasDefault: false, hasNamespace: false }),
     );
+    await writeText(cache, bodyPath, "export * fro");
 
     await tick();
     await writeText(project, "/b.ts", `import { yo } from "greet";\nexport const B = yo + "!";`);
     await newProjectBuild({ project, cache, sources }).build();
 
-    const warm = await readText(cache, "/~/~deps/greet/index.js");
-    expect(warm).toContain("hi");
-    expect(warm).toContain("yo");
-    expect(warm).toContain("hey"); // the sidecar's promise is honoured by the body
+    const warm = await readText(cache, bodyPath);
+    expect(warm).toContain(`export * from "../../../greet@1.0.0/index.js"`);
   });
 });
