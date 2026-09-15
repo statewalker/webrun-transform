@@ -13,14 +13,14 @@ catalogs:
       specifier: ^2.16.3
       version: 2.16.3
     '@statewalker/webrun-files':
-      specifier: ^0.7.0
-      version: 0.7.0
+      specifier: ^0.9.0
+      version: 0.9.0
     '@statewalker/webrun-files-mem':
-      specifier: ^0.7.2
-      version: 0.7.2
+      specifier: ^0.9.0
+      version: 0.9.0
     '@statewalker/webrun-files-node':
-      specifier: ^0.7.0
-      version: 0.7.0
+      specifier: ^0.9.0
+      version: 0.9.0
     '@types/node':
       specifier: ^26.2.0
       version: 26.4.1
@@ -88,11 +88,11 @@ importers:
         version: link:../webrun-dataflow
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.7.0
+        version: 0.9.0
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.7.2
+        version: 0.9.0
       rimraf:
         specifier: 'catalog:'
         version: 6.1.3
@@ -131,10 +131,10 @@ importers:
         version: 2.16.3
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.7.0
+        version: 0.9.0
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.7.2
+        version: 0.9.0
       acorn:
         specifier: ^8.12.1
         version: 8.18.0
@@ -165,7 +165,7 @@ importers:
     devDependencies:
       '@statewalker/webrun-files-node':
         specifier: 'catalog:'
-        version: 0.7.0
+        version: 0.9.0
       '@types/node':
         specifier: 'catalog:'
         version: 26.4.1
@@ -198,7 +198,7 @@ importers:
         version: link:../webrun-dataflow
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.7.0
+        version: 0.9.0
       '@statewalker/webrun-modules':
         specifier: workspace:*
         version: link:../webrun-modules
@@ -208,7 +208,7 @@ importers:
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.7.2
+        version: 0.9.0
       rimraf:
         specifier: 'catalog:'
         version: 6.1.3
@@ -226,7 +226,7 @@ importers:
     dependencies:
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.7.0
+        version: 0.9.0
       '@statewalker/webrun-modules':
         specifier: workspace:*
         version: link:../webrun-modules
@@ -236,7 +236,7 @@ importers:
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.7.2
+        version: 0.9.0
       rimraf:
         specifier: 'catalog:'
         version: 6.1.3
@@ -1014,14 +1014,14 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@statewalker/webrun-files-mem@0.7.2':
-    resolution: {integrity: sha512-OwbmkOJZx038lhABxJdL4dw7j2+u3lJeLN/n4G7S7E6pQfcwEV+LjQ9VKEaiK5CG2Y2ILmw2P1hkb5shCtdBHA==}
+  '@statewalker/webrun-files-mem@0.9.0':
+    resolution: {integrity: sha512-qmOBfOZC6PEfnnXwzR2Wxq+tiWP2vhH9Pf77dToIBpwOeuAojxGe35bgkjaXfKTl6VsLFgisLSLkiGd4NqU3dQ==}
 
-  '@statewalker/webrun-files-node@0.7.0':
-    resolution: {integrity: sha512-nheoto/fEEdCFuETQTIDPI8lEG9c9o43Zj4tZsL6wzFPUIvNWnUs+IJ2cRjrxZf1ag9yS1UhJUlxzxwi94wUDA==}
+  '@statewalker/webrun-files-node@0.9.0':
+    resolution: {integrity: sha512-VXCH4717RqCIf68qxcT+RMkeP6M6AOrUim9W/PrDuwkjWYVqeJS0j++3r5EM2lZ20sSAgZtJqYuN0YoEL58zYg==}
 
-  '@statewalker/webrun-files@0.7.0':
-    resolution: {integrity: sha512-NHrlyRzcmzXQ3arf4OqDrVE+FJpLaiR/EwTJkcpPmcmfII9MKAcjV8DNmKDYcmHOYhcMmhdBtY8Yb41qR0TZAw==}
+  '@statewalker/webrun-files@0.9.0':
+    resolution: {integrity: sha512-4ZyYJKo3W7nzwa0HCymeZonsQwuhY+Dv06vC59R0ytmIrAqOeytwCxTFTwv2DfACDe/dB9sSG+q6ffOBbajRyQ==}
 
   '@turbo/darwin-64@2.10.9':
     resolution: {integrity: sha512-Jh+pTGXLNz8+1tkUU13TI/f+ZOI+OvC4YbHi1H+57iSpLt5DR3xgptd+4sA07RdjdRR/RX/01uQQu2OkbzIefA==}
@@ -3054,15 +3054,15 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@statewalker/webrun-files-mem@0.7.2':
+  '@statewalker/webrun-files-mem@0.9.0':
     dependencies:
-      '@statewalker/webrun-files': 0.7.0
+      '@statewalker/webrun-files': 0.9.0
 
-  '@statewalker/webrun-files-node@0.7.0':
+  '@statewalker/webrun-files-node@0.9.0':
     dependencies:
-      '@statewalker/webrun-files': 0.7.0
+      '@statewalker/webrun-files': 0.9.0
 
-  '@statewalker/webrun-files@0.7.0': {}
+  '@statewalker/webrun-files@0.9.0': {}
 
   '@turbo/darwin-64@2.10.9':
     optional: true
@@ -4117,7 +4117,7 @@ snapshots:
       lightningcss: 1.33.0
       picomatch: 4.0.5
       postcss: 8.5.26
-      rolldown: 1.2.3
+      rolldown: 1.2.6
       tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 26.4.1
