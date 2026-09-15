@@ -123,6 +123,20 @@ const http = createServer(async (nodeReq, nodeRes) => {
   nodeRes.end(response.body ? Buffer.from(await response.arrayBuffer()) : undefined);
 });
 
+// Report listen failures explicitly. Left unhandled, an EADDRINUSE here can end the
+// process silently with exit code 0 (seen on Node 24 after the top-level `await
+// mkdtemp` above), so a busy port looks like "nothing happens".
+http.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `Port ${PORT} is already in use. Pick another one: PORT=8788 pnpm example:server`,
+    );
+  } else {
+    console.error(err);
+  }
+  process.exit(1);
+});
+
 http.listen(PORT, async () => {
   console.log(`unpkg-like server on http://localhost:${PORT}  (cache: ${cacheDir})`);
 
