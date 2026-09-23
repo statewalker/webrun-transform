@@ -41,6 +41,12 @@ const CONTENT_TYPES: Record<string, string> = {
   wasm: "application/wasm",
   map: "application/json",
   txt: "text/plain",
+  // IANA-registered `font/*` types; superseded the old `application/font-woff` forms.
+  woff2: "font/woff2",
+  woff: "font/woff",
+  ttf: "font/ttf",
+  otf: "font/otf",
+  eot: "application/vnd.ms-fontobject",
 };
 
 /** Guess a content-type from a file path (non-module resources). */

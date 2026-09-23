@@ -40,7 +40,7 @@ describe("newProjectBuild — Tailwind transform (build-only)", () => {
     const injector = await readText(cache, "/~/styles.js");
     expect(injector).toContain(".flex");
     expect(injector).toContain(".p-4");
-  });
+  }, 10_000); // median 2151ms over 3 idle runs (1608/2151/2957ms); 4x headroom for loaded CI
 
   it('suppresses the bare `@import "tailwindcss"` so the walk never npm-resolves it', async () => {
     const project = new MemFilesApi();
@@ -55,7 +55,7 @@ describe("newProjectBuild — Tailwind transform (build-only)", () => {
 
     const injector = await readText(cache, "/~/styles.js");
     expect(injector).toContain(".flex");
-  });
+  }, 10_000); // median 2022ms over 3 idle runs (1873/2199/2022ms); 4x headroom for loaded CI
 
   it("honors the project's @theme customizations through the full build", async () => {
     const project = new MemFilesApi();
@@ -74,7 +74,7 @@ describe("newProjectBuild — Tailwind transform (build-only)", () => {
     const injector = await readText(cache, "/~/styles.js");
     expect(injector).toContain("bg-brand");
     expect(injector).toContain("#123456");
-  });
+  }, 10_000); // median 1304ms over 3 idle runs (1343/1304/1028ms); 4x headroom for loaded CI
 
   it("resolves a sibling project @import (via ctx.files) and honors its @theme", async () => {
     const project = new MemFilesApi();
@@ -89,7 +89,7 @@ describe("newProjectBuild — Tailwind transform (build-only)", () => {
     // proof the project-relative resolver branch works end-to-end.
     const injector = await readText(cache, "/~/styles.js");
     expect(injector).toContain("#abcdef");
-  });
+  }, 10_000); // median 1327ms over 3 idle runs (1480/1327/1033ms); 4x headroom for loaded CI
 });
 
 describe("newProjectBuild — Tailwind inputs-only cache key", () => {
@@ -116,7 +116,7 @@ describe("newProjectBuild — Tailwind inputs-only cache key", () => {
     // Scanner re-surfaces styles.css, but the hash gate (version + source unchanged)
     // reuses the artifact — no re-generation.
     expect(css.big).toBe(before);
-  });
+  }, 10_000); // median 1278ms over 3 idle runs (1426/1278/995ms); 4x headroom for loaded CI
 
   it("(B) bumping the version seam re-generates with unchanged entry bytes", async () => {
     const project = new MemFilesApi();
@@ -137,5 +137,5 @@ describe("newProjectBuild — Tailwind inputs-only cache key", () => {
     // The version is folded into the gate key, so the hash differs and Tailwind
     // regenerates despite byte-identical entry.
     expect(css.big).toBeGreaterThan(before);
-  });
+  }, 15_000); // 2 full generations/run; median 2538ms over 3 idle runs (1827/2538/2798ms); 4x headroom
 });
