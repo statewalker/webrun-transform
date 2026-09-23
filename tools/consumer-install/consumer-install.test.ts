@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -30,23 +30,64 @@ afterAll(() => {
   for (const s of scratches) rmSync(s, { recursive: true, force: true });
 });
 
-/** Pack a workspace package and install the tarball into a fresh directory. */
-function installFromTarball(target: ConsumerTarget): string {
+/** Names this repo's own dependencies (direct + peer) a package's package.json declares. */
+function ownWorkspaceDeps(dir: string): string[] {
+  const pkgPath = join(REPO, "packages", dir, "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  return Object.keys({ ...pkg.dependencies, ...pkg.peerDependencies });
+}
+
+/**
+ * The target plus every package in `packages/` it depends on, transitively — so the
+ * install below never has to reach the npm registry for a workspace sibling that only
+ * exists, fixed, in this working tree.
+ */
+function workspaceClosure(target: ConsumerTarget): ConsumerTarget[] {
+  const byName = new Map(PACKAGES.map((p) => [p.name, p]));
+  const closure = new Map<string, ConsumerTarget>();
+  const stack: ConsumerTarget[] = [target];
+  while (stack.length > 0) {
+    const t = stack.pop() as ConsumerTarget;
+    if (closure.has(t.name)) continue;
+    closure.set(t.name, t);
+    for (const depName of ownWorkspaceDeps(t.dir)) {
+      const dep = byName.get(depName);
+      if (dep) stack.push(dep);
+    }
+  }
+  return [...closure.values()];
+}
+
+function packOne(target: ConsumerTarget): string {
   const pkgDir = join(REPO, "packages", target.dir);
   const out = execFileSync("pnpm", ["pack", "--pack-destination", pkgDir], {
     cwd: pkgDir,
     encoding: "utf8",
   });
-  const tarball = resolve(pkgDir, out.trim().split("\n").at(-1) as string);
+  return resolve(pkgDir, out.trim().split("\n").at(-1) as string);
+}
+
+/**
+ * Pack the target and its transitive workspace-dependency closure, then install every
+ * tarball together in one `npm install`. Installing the closure's tarballs alongside the
+ * target is what lets npm satisfy a workspace sibling from the working tree instead of
+ * fetching whatever is currently published on the registry.
+ */
+function installFromTarball(target: ConsumerTarget): string {
+  const closure = workspaceClosure(target);
+  const tarballs = closure.map(packOne);
 
   const scratch = mkdtempSync(join(tmpdir(), "consumer-"));
   scratches.push(scratch);
   writeFileSync(join(scratch, "package.json"), JSON.stringify({ name: "c", type: "module", private: true }));
-  execFileSync("npm", ["install", "--no-audit", "--no-fund", tarball], {
-    cwd: scratch,
-    encoding: "utf8",
-  });
-  rmSync(tarball, { force: true });
+  try {
+    execFileSync("npm", ["install", "--no-audit", "--no-fund", ...tarballs], {
+      cwd: scratch,
+      encoding: "utf8",
+    });
+  } finally {
+    for (const tarball of tarballs) rmSync(tarball, { force: true });
+  }
   return scratch;
 }
 
