@@ -250,6 +250,12 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.4.1)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@26.4.1)(esbuild@0.28.2)(tsx@4.23.13))
 
+  tools/consumer-install:
+    devDependencies:
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@26.4.1)(@vitest/coverage-v8@4.1.10)(vite@8.2.1(@types/node@26.4.1)(esbuild@0.28.2)(tsx@4.23.13))
+
 packages:
 
   '@babel/code-frame@7.29.7':
