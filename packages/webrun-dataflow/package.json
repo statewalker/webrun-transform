@@ -15,7 +15,11 @@
     "url": "git+https://github.com/statewalker/webrun-files.git"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
   },
   "files": [
     "dist",
