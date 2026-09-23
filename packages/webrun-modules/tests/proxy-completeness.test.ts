@@ -65,6 +65,13 @@ function depSource(withDefault = false): Source {
 
 const PROXY = "http://h/app@1.0.0/~deps/dep/index.js";
 
+/** `dep`'s served endpoint, as a `data:` URL, so a proxy body can be EVALUATED —
+ *  a body that merely contains the right text still says nothing about whether the
+ *  name links. */
+const DEP_DATA_URL = `data:text/javascript;base64,${Buffer.from(
+  "export const alpha = 1;\nexport const beta = 2;",
+).toString("base64")}`;
+
 /** The proxy body this server serves after transforming exactly `files`. */
 async function proxyAfter(
   secondImport: string,
@@ -93,6 +100,26 @@ describe("shared proxy completeness", () => {
     const early = await proxyAfter(namespaceSecond, ["first.js"]);
     const late = await proxyAfter(namespaceSecond, ["first.js", "second.js"]);
     expect(early).toBe(late);
+  });
+
+  // The vega-lite report, in miniature: `vega.module.js` imports `{ transforms }`
+  // from `vega-dataflow` and ALSO `{ Dataflow }`; the proxy served after the first
+  // importer carried only `transforms`, and the link failed with "does not provide
+  // an export named 'Dataflow'". Sameness across transform order (above) is the
+  // invariant; this asserts the consequence directly — the name the LATER importer
+  // needs is already there, on a proxy generated before that importer was seen.
+  it("already provides a name only a not-yet-transformed importer needs", async () => {
+    const early = await proxyAfter(namedSecond, ["first.js"]);
+    expect(early).toContain("export * from");
+    expect(early).not.toMatch(/export \{\s*alpha\s*\} from/); // not a narrowed list
+    // `export *` is a superset of any named list, so `beta` — which only
+    // `second.js` asks for — is already served.
+    const m = await import(
+      `data:text/javascript;base64,${Buffer.from(
+        early.replace(/"[^"]*dep@1\.0\.0\/index\.js"/g, JSON.stringify(DEP_DATA_URL)),
+      ).toString("base64")}`
+    );
+    expect((m as { beta?: number }).beta).toBe(2);
   });
 
   const defaultSecond = `import d from "dep";\nexport const b = d;`;

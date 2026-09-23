@@ -53,6 +53,22 @@ export function resolveEntry(
       fields: browser ? ["browser", "module", "main"] : ["module", "main"],
     });
     if (typeof leg === "string") return norm(leg);
+    // A `browser` field has two meanings (browserify): a STRING is the browser
+    // entry, an OBJECT is a per-module substitution MAP — and `legacy` hands the
+    // map back verbatim, which is not an entry. Treating that as "no legacy main"
+    // fell through to the fabricated `index.js` below; for jszip (`main:
+    // "./lib/index"`, `browser: { "./lib/index": "./dist/jszip.min.js" }`) that is
+    // a path no file backs, so the package 404s. Take `module`/`main` as the entry
+    // and let the map remap it — which is what the map is for.
+    if (browser && leg && typeof leg === "object") {
+      const base = legacy(manifest, { fields: ["module", "main"] });
+      if (typeof base === "string") {
+        // `legacy` with a STRING `browser` looks the entry up in the map and
+        // returns the entry itself when the map has nothing to say about it.
+        const mapped = legacy(manifest, { browser: base, fields: ["browser"] });
+        return norm(typeof mapped === "string" ? mapped : base);
+      }
+    }
     // `exports` present but neither `.` nor a legacy main resolves: the package has
     // no root entry (e.g. `@jspm/core`). Fabricating `index.js` here yields a dead
     // URL that 404s; fail loudly instead (Node throws ERR_PACKAGE_PATH_NOT_EXPORTED).

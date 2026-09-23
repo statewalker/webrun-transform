@@ -40,6 +40,34 @@ describe("resolveEntry", () => {
     ).toBe("browser.js");
   });
 
+  it("treats an object `browser` field as a substitution map, not an entry", () => {
+    // Browserify's `browser` field is a string ⇒ the browser ENTRY, an object ⇒ a
+    // per-module substitution MAP. jszip@3.10.2 is the object form:
+    //   main: "./lib/index", browser: { "./lib/index": "./dist/jszip.min.js", … }
+    // Reading the object as "no legacy main" fabricated `index.js`, a file that is
+    // not in the tarball — the package 404s (and, before the miss-is-a-miss fix,
+    // was served as an EMPTY module whose `default` was `{}`).
+    const jszip = mk({
+      name: "jszip",
+      main: "./lib/index",
+      browser: {
+        "./lib/index": "./dist/jszip.min.js",
+        "readable-stream": "./lib/readable-stream-browser.js",
+      },
+    });
+    expect(resolveEntry(jszip, undefined, "browser")).toBe("dist/jszip.min.js");
+    expect(resolveEntry(jszip, undefined, "node")).toBe("lib/index");
+  });
+
+  it("keeps module/main when an object `browser` field does not remap the entry", () => {
+    const m = mk({
+      main: "./lib/main.js",
+      module: "./lib/esm.js",
+      browser: { fs: false, "./lib/node-only.js": "./lib/browser-only.js" },
+    });
+    expect(resolveEntry(m, undefined, "browser")).toBe("lib/esm.js");
+  });
+
   it("treats a deep subpath as a direct file when unexported", () => {
     expect(resolveEntry(mk({ main: "./index.js" }), "lib/x.js", "browser")).toBe("lib/x.js");
   });
