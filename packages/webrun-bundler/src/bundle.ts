@@ -245,6 +245,7 @@ export async function bundle(opts: BundleOptions): Promise<BundleResult> {
       code: jsFile.text,
       map: { version: 3, sources: [], names: [], mappings: "" } as unknown as SourceMap,
       metafile: result.metafile as BundleResult["metafile"],
+      warnings: result.warnings,
     } as BundleResult;
   const raw = JSON.parse(mapFile.text) as SourceMap;
   const map: SourceMap = {

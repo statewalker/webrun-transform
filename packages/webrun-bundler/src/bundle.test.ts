@@ -168,6 +168,34 @@ describe("bundle", () => {
     expect(r.map.sources).not.toContain("npm:esm-pkg@1.2.3/dist/browser.js");
   });
 
+  it("sourcemap: false builds no map (the same code, no sourceMappingURL), warnings kept", async () => {
+    const files = await filesOf({
+      "/package.json": JSON.stringify({
+        dependencies: { "esm-pkg": "^1.0.0", "cjs-pkg": "^2.0.0" },
+      }),
+      "/src/app.ts": APP,
+      "/src/data.json": '{ "v": 42 }',
+      // esbuild warns about a comparison with -0.
+      "/src/warn.ts": "export const odd = (x: number) => x === -0;\n",
+    });
+    const { source } = fakeRegistry({ "esm-pkg": await esmPackage(), "cjs-pkg": CJS_PKG });
+    await files.write("/src/entry.ts", [
+      new TextEncoder().encode('export * from "./app.ts";\nexport * from "./warn.ts";\n'),
+    ]);
+    const r = await bundle({
+      esbuild,
+      files,
+      entry: "/src/entry.ts",
+      packages: npmPackages({ source }),
+      sourcemap: false,
+    });
+    expect(await (await run(r.code)).main("bob")).toBe("hello bob! BOB! 42");
+    expect(r.code).not.toMatch(/sourceMappingURL/);
+    expect(r.map.mappings).toBe("");
+    expect(r.map.sources).toEqual([]);
+    expect(r.warnings?.map((w) => w.text).join(" ")).toMatch(/-0/);
+  });
+
   it("maps every line that comes from an input; only esbuild's own helpers have no source", async () => {
     const files = await filesOf({
       "/package.json": JSON.stringify({
@@ -246,7 +274,7 @@ describe("bundle", () => {
     );
   });
 
-  it("gives files in a \"type\": \"module\" scope Node's CommonJS interop (tslib's modules/)", async () => {
+  it('gives files in a "type": "module" scope Node\'s CommonJS interop (tslib\'s modules/)', async () => {
     // tslib 2.3: exports "import" -> modules/index.js (modules/package.json: type module), which
     // does `import tslib from "../tslib.js"` of a CommonJS file that sets __esModule. In Node
     // (and Vite, which pre-bundles from disk) the default import is module.exports.
@@ -256,7 +284,9 @@ describe("bundle", () => {
         name: "tslib",
         version: "2.3.0",
         main: "tslib.js",
-        exports: { ".": { import: "./modules/index.js", module: "./tslib.es6.js", default: "./tslib.js" } },
+        exports: {
+          ".": { import: "./modules/index.js", module: "./tslib.es6.js", default: "./tslib.js" },
+        },
       }),
       "/node_modules/tslib/modules/package.json": JSON.stringify({ type: "module" }),
       "/node_modules/tslib/modules/index.js":
@@ -265,7 +295,12 @@ describe("bundle", () => {
         'Object.defineProperty(exports, "__esModule", { value: true });\nexports.__extends = function () {};\n',
       "/node_modules/tslib/tslib.es6.js": "export function __extends() {}\n",
     });
-    const r = await bundle({ esbuild, files, entry: "/src/main.js", conditions: ["browser", "import"] });
+    const r = await bundle({
+      esbuild,
+      files,
+      entry: "/src/main.js",
+      conditions: ["browser", "import"],
+    });
     expect((await run(r.code)).out).toBe("function");
     expect(r.map.sources).toContain("npm:tslib@2.3.0/modules/index.js");
   });
