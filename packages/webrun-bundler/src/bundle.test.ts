@@ -205,7 +205,7 @@ describe("bundle", () => {
       packages: npmPackages({ source }),
     });
     const mapped = withMaps.metafile?.inputs[pkgInput as string]?.bytes ?? 0;
-    expect(inputs[pkgInput as string].bytes).toBeLessThan(mapped);
+    expect(inputs[pkgInput as string]?.bytes ?? Infinity).toBeLessThan(mapped);
   });
 
   it("maps every line that comes from an input; only esbuild's own helpers have no source", async () => {
