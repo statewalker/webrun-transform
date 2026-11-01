@@ -1,8 +1,8 @@
 import { readText } from "@statewalker/webrun-files";
 import type { Loader, Plugin } from "esbuild-wasm";
-import { inlineInputMap } from "./input-maps.js";
+import { inlineInputMap, withoutInputMap } from "./input-maps.js";
 import { nodeModulesPackages } from "./packages.js";
-import { idOf, joinWithin, pathOf, readManifest } from "./paths.js";
+import { dirOf, idOf, isFile, joinWithin, pathOf, readManifest } from "./paths.js";
 import { resolveSpecifier } from "./resolve.js";
 import type {
   BundleOptions,
@@ -56,7 +56,8 @@ const sourceId = (s: string) =>
   s
     .replace(/^(\.\.\/)*/, "")
     .replace(new RegExp(`^${VNS}:`), "virtual:")
-    .replace(new RegExp(`^${NS}:`), "");
+    .replace(new RegExp(`^${NS}:`), "")
+    .replace("?type=module.mjs", ""); // ESM_SUFFIX: the file's id, as in the map's other sources
 
 const toBase64 = (text: string) => {
   const bytes = new TextEncoder().encode(text);
@@ -85,6 +86,9 @@ function linkMap(code: string, map: SourceMap, how: "external" | "inline", name:
  * its own map (TypeScript compiled to `.js`), to the package's original source. The
  * map's sources are file ids: `~/src/app.ts`, `npm:pkg@1.2.3/src/index.ts`.
  */
+/** Marks the id of a `.js` file in a `"type": "module"` package scope (see `moduleTypeOf`). */
+const ESM_SUFFIX = "?type=module.mjs";
+
 export async function bundle(opts: BundleOptions): Promise<BundleResult> {
   const root = opts.root ?? "/";
   const project: Mount = {
@@ -104,7 +108,36 @@ export async function bundle(opts: BundleOptions): Promise<BundleResult> {
     typeof supplied === "function" ? supplied(spec) : supplied?.[spec];
 
   /** The mount and path of a file id; the longest prefix wins (`npm:@a/b@1.0.0/…`). */
+  /**
+   * The module type of a `.js` file, as Node.js decides it: the `type` of the nearest
+   * `package.json` (tslib ships `modules/package.json` with `"type": "module"`). esbuild reads
+   * that only for files on its own file system; for ours, a file in a `"type": "module"` scope
+   * gets an id ending in ESM_SUFFIX (`.mjs`), so that esbuild gives its imports of CommonJS
+   * modules Node's interop: the default import is `module.exports`, even with `__esModule`.
+   * Vite gets the same from esbuild by pre-bundling dependencies from disk.
+   */
+  const scopeTypes = new Map<string, string | undefined>();
+  const moduleTypeOf = async (mount: Mount, path: string): Promise<string | undefined> => {
+    const root = mount.root.replace(/\/$/, "");
+    for (let dir = dirOf(path); dir.length >= root.length; dir = dirOf(dir)) {
+      const key = `${mount.prefix}:${dir}`;
+      if (scopeTypes.has(key)) return scopeTypes.get(key);
+      const pj = `${dir === "/" ? "" : dir}/package.json`;
+      if (await isFile(mount, pj)) {
+        let type: string | undefined;
+        try {
+          type = JSON.parse(await readText(mount.files, pj)).type;
+        } catch {}
+        scopeTypes.set(key, type);
+        return type;
+      }
+      if (dir === root || dir === "/" || !dir) break;
+    }
+    return undefined;
+  };
+
   const locate = (id: string) => {
+    if (id.endsWith(ESM_SUFFIX)) id = id.slice(0, -ESM_SUFFIX.length);
     let best: Mount | undefined;
     for (const m of mounts.values())
       if (id.startsWith(`${m.prefix}/`) && (!best || m.prefix.length > best.prefix.length))
@@ -152,7 +185,8 @@ export async function bundle(opts: BundleOptions): Promise<BundleResult> {
         }
         if (!r) return failed();
         mounts.set(r.mount.prefix, r.mount);
-        return { path: idOf(r.mount, r.path), namespace: NS };
+        const esm = /\.js$/.test(r.path) && (await moduleTypeOf(r.mount, r.path)) === "module";
+        return { path: idOf(r.mount, r.path) + (esm ? ESM_SUFFIX : ""), namespace: NS };
       });
       b.onLoad({ filter: /.*/, namespace: VNS }, (args) => ({
         contents: virtualSource(args.path) ?? "",
@@ -174,7 +208,10 @@ export async function bundle(opts: BundleOptions): Promise<BundleResult> {
         }
         const text = await readText(mount.files, path);
         const js = loader === "js" || loader === "ts" || loader === "jsx" || loader === "tsx";
-        return { contents: js ? await inlineInputMap(mount, path, text) : text, loader };
+        // Without an output map, the inputs' own maps are not read: esbuild would only parse them.
+        if (!js) return { contents: text, loader };
+        if (opts.sourcemap === false) return { contents: withoutInputMap(text), loader };
+        return { contents: await inlineInputMap(mount, path, text), loader };
       });
     },
   };
@@ -196,14 +233,23 @@ export async function bundle(opts: BundleOptions): Promise<BundleResult> {
     ...(opts.lowerAwait ? { supported: LOWER_AWAIT } : {}),
     ...rest,
     ...(opts.inject?.length ? { inject: opts.inject.map((s) => INJECT + s) } : {}),
-    sourcemap: "external",
-    sourcesContent: true,
+    // `sourcemap: false`: no map at all (a large bundle's map, with every source's content,
+    // can take more memory than the bundle).
+    sourcemap: opts.sourcemap === false ? false : "external",
+    sourcesContent: opts.sourcemap !== false,
     plugins: [...extraPlugins, plugin],
   });
   const out = result.outputFiles ?? [];
   const jsFile = out.find((f) => !f.path.endsWith(".map"));
   const mapFile = out.find((f) => f.path.endsWith(".map"));
-  if (!jsFile || !mapFile) throw new Error("webrun-bundler: esbuild produced no output");
+  if (!jsFile) throw new Error("webrun-bundler: esbuild produced no output");
+  if (!mapFile)
+    return {
+      code: jsFile.text,
+      map: { version: 3, sources: [], names: [], mappings: "" } as unknown as SourceMap,
+      metafile: result.metafile as BundleResult["metafile"],
+      warnings: result.warnings,
+    } as BundleResult;
   const raw = JSON.parse(mapFile.text) as SourceMap;
   const map: SourceMap = {
     ...raw,
@@ -212,7 +258,7 @@ export async function bundle(opts: BundleOptions): Promise<BundleResult> {
   };
   delete map.sourceRoot;
   return {
-    code: linkMap(jsFile.text, map, opts.sourcemap ?? "external", outfile),
+    code: linkMap(jsFile.text, map, opts.sourcemap || "external", outfile),
     map,
     metafile: result.metafile as BundleResult["metafile"],
     warnings: result.warnings,

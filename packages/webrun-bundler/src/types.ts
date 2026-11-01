@@ -111,7 +111,7 @@ export interface BundleOptions {
   /** Name of the output file: the map is linked as `<outfile>.map` (default `bundle.js`). */
   outfile?: string;
   /** `external` (default): `code` links `<outfile>.map`, which `map` holds; `inline`: `code` carries it too. */
-  sourcemap?: "external" | "inline";
+  sourcemap?: "external" | "inline" | false;
   /** Other esbuild options, applied last (the bundler's plugin and source maps stay). */
   esbuildOptions?: Partial<BuildOptions>;
 }
