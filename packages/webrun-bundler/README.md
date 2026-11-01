@@ -85,7 +85,7 @@ const { code, map } = await transpile(source, { esbuild, path: "~/src/f.ts", low
 | `lowerAwait` | `false` | lower `async`/`await`, async generators and `for await` to generators |
 | `minify`, `define` | | as in esbuild |
 | `outfile` | `bundle.js` | the name the map link uses (`<outfile>.map`) |
-| `sourcemap` | `external` | `inline` also puts the map in `code` |
+| `sourcemap` | `external` | `inline` also puts the map in `code`; `false` builds no map (`map` is empty, `code` has no link) and does not read the inputs' maps |
 | `esbuildOptions` | | other esbuild options, applied last (the plugin and source maps stay) |
 
 ## Examples
@@ -145,6 +145,18 @@ usually links one (`//# sourceMappingURL=index.js.map`): the bundler reads it fr
 tree, rewrites its sources to ids of that tree (`../src/index.ts` → `npm:pkg@1.0.0/src/index.ts`),
 fills a missing `sourcesContent` from the package's files, and inlines it. A map that is missing
 or broken is dropped: the file then maps to itself.
+
+With `sourcemap: false` none of this happens: the `sourceMappingURL` comment is removed and the map
+is not read. An inlined map carries its sources' text and can outweigh the code: for EmDash's
+server bundle (cellb.dev's in-browser builder) esbuild's input goes from 58.9 MB to 27.0 MB.
+
+### Module types follow Node
+
+esbuild reads a `package.json` `"type"` only for files on its own file system. For the files this
+plugin loads, a `.js` file in a `"type": "module"` scope gets an id ending in `?type=module.mjs`,
+so esbuild treats it as ESM the way Node does: a default import of a CommonJS module is its
+`module.exports`, even when it sets `__esModule`. tslib 2.3's `modules/index.js` depends on it.
+The suffix is dropped from the ids in the source map.
 
 ### pnpm layouts
 
