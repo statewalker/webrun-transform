@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/webrun-bundler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "Transpiler, resolver and bundler on esbuild-wasm that reads everything through a FilesApi (MemFilesApi, OPFS, a FilesApi over a port; never node:fs) and fetches npm packages on demand. Every transformation keeps a source map: each line of a bundle traces back to the user's file or to the npm package's own source.",
