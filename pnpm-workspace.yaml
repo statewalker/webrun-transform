@@ -12,7 +12,7 @@ catalog:
   "@libp2p/identify": ^4.1.14
   "@libp2p/interface": ^3.3.0
   "@libp2p/peer-id": ^6.0.15
-  "@libp2p/webrtc": ^6.0.33
+  "@libp2p/webrtc": ^7.0.2
   "@libp2p/websockets": ^10.1.21
   "@multiformats/multiaddr": ^13.0.3
   "@statewalker/webrun-http-browser": "^0.7.0"
