@@ -29,6 +29,17 @@ const fromBase64 = (b64: string) =>
  * esbuild then composes it with its own: a bundled line traces to the original source.
  * A map that is missing or unreadable is dropped (the file maps to itself).
  */
+/**
+ * `code` without its trailing `sourceMappingURL` comment (and without reading the map): for
+ * bundles built with no source map, where an inlined input map would only add to what esbuild
+ * parses and holds (a package's maps, with their sources' text, can outweigh its code).
+ */
+export function withoutInputMap(code: string): string {
+  const end = code.trimEnd();
+  const nl = end.lastIndexOf("\n");
+  return MAP_COMMENT.test(end.slice(nl + 1)) ? end.slice(0, Math.max(0, nl)) : code;
+}
+
 export async function inlineInputMap(mount: Mount, path: string, code: string): Promise<string> {
   const lines = code.trimEnd().split("\n");
   const last = lines[lines.length - 1] ?? "";

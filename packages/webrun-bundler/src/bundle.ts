@@ -1,6 +1,6 @@
 import { readText } from "@statewalker/webrun-files";
 import type { Loader, Plugin } from "esbuild-wasm";
-import { inlineInputMap } from "./input-maps.js";
+import { inlineInputMap, withoutInputMap } from "./input-maps.js";
 import { nodeModulesPackages } from "./packages.js";
 import { dirOf, idOf, isFile, joinWithin, pathOf, readManifest } from "./paths.js";
 import { resolveSpecifier } from "./resolve.js";
@@ -208,7 +208,10 @@ export async function bundle(opts: BundleOptions): Promise<BundleResult> {
         }
         const text = await readText(mount.files, path);
         const js = loader === "js" || loader === "ts" || loader === "jsx" || loader === "tsx";
-        return { contents: js ? await inlineInputMap(mount, path, text) : text, loader };
+        // Without an output map, the inputs' own maps are not read: esbuild would only parse them.
+        if (!js) return { contents: text, loader };
+        if (opts.sourcemap === false) return { contents: withoutInputMap(text), loader };
+        return { contents: await inlineInputMap(mount, path, text), loader };
       });
     },
   };

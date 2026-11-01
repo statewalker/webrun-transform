@@ -194,6 +194,18 @@ describe("bundle", () => {
     expect(r.map.mappings).toBe("");
     expect(r.map.sources).toEqual([]);
     expect(r.warnings?.map((w) => w.text).join(" ")).toMatch(/-0/);
+    // The package's own map is neither read nor inlined: esbuild gets its code alone.
+    const inputs = r.metafile?.inputs ?? {};
+    const pkgInput = Object.keys(inputs).find((k) => k.includes("esm-pkg@1.2.3/dist/browser.js"));
+    expect(pkgInput).toBeDefined();
+    const withMaps = await bundle({
+      esbuild,
+      files,
+      entry: "/src/entry.ts",
+      packages: npmPackages({ source }),
+    });
+    const mapped = withMaps.metafile?.inputs[pkgInput as string]?.bytes ?? 0;
+    expect(inputs[pkgInput as string].bytes).toBeLessThan(mapped);
   });
 
   it("maps every line that comes from an input; only esbuild's own helpers have no source", async () => {
